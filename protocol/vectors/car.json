@@ -1,0 +1,122 @@
+{
+  "description": "CAR packaging vectors. site-basic/ is the input; every implementation must reproduce rootCid and block list byte-for-byte, accept site-basic.car, and reject every negative CAR.",
+  "meshProfile": {
+    "cidVersion": 1,
+    "hash": "sha2-256",
+    "rawLeaves": true,
+    "chunker": "size-16384",
+    "layout": "balanced, maxChildrenPerNode 174",
+    "wrapWithDirectory": true,
+    "hamtSharding": "never",
+    "blockOrder": "depth-first pre-order from the root, each block once",
+    "kuboEquivalent": "ipfs add -r --cid-version=1 --chunker=size-16384 <dir>"
+  },
+  "limits": {
+    "maxBlockBytes": 32768,
+    "maxSiteBytes": 1048576,
+    "maxLogicalBytes": 4194304
+  },
+  "input": "site-basic",
+  "car": "site-basic.car",
+  "rootCid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+  "origCidHint": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+  "origCidHintNote": "what a default `ipfs add -r` gives; the real ENS contenthash may differ",
+  "crossChecked": "rootCid and origCidHint confirmed with Kubo 0.43.1 (2026-11-06)",
+  "totalBytes": 41002,
+  "blocks": [
+    {
+      "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+      "size": 155
+    },
+    {
+      "cid": "bafybeig6eusopuuv2bnemz3opu5awsnqpyg3c2gwefu7odz5sjaphhyjvi",
+      "size": 56
+    },
+    {
+      "cid": "bafkreicvsuhqikmrrhhb3gnjhor2ovrnwudw2jssxhsacy5lbhz44c4vmu",
+      "size": 93
+    },
+    {
+      "cid": "bafkreic5cbthwx4turrylnazyhn22pfhy6yugagaiuhlqxxunreobx7yxa",
+      "size": 373
+    },
+    {
+      "cid": "bafybeidz6mewp3lrzszurx4wveuhevdydxnwippxhngn3d6m3zo3zzou54",
+      "size": 56
+    },
+    {
+      "cid": "bafybeihltwfwfl5kjywxtqjvtvoyzc5hvjeerjt26jogqjuvltzfytfmc4",
+      "size": 156
+    },
+    {
+      "cid": "bafkreihzaauexlawvjv5ieuwx6taubz5dsymgtnr6qteu2kxqtspn5rjfe",
+      "size": 16384
+    },
+    {
+      "cid": "bafkreibjn2pisynjain2hqms45wn4ws5qf4vmqmnzdbslxbvgnxwldiiwq",
+      "size": 16384
+    },
+    {
+      "cid": "bafkreibl5hdmkdj2xhcyqbfpof5x4wumjocqt45jw44mkcnctq6v3m525u",
+      "size": 7345
+    }
+  ],
+  "negatives": [
+    {
+      "file": "site-basic.tampered-block.car",
+      "why": "one byte of the last raw leaf flipped; CID unchanged",
+      "expect": {
+        "ok": false,
+        "errorContains": "hash mismatch"
+      }
+    },
+    {
+      "file": "site-basic.missing-block.car",
+      "why": "last raw leaf omitted",
+      "expect": {
+        "ok": false,
+        "errorContains": "missing block"
+      }
+    },
+    {
+      "file": "site-basic.extra-block.car",
+      "why": "an unreachable raw block appended",
+      "expect": {
+        "ok": false,
+        "errorContains": "block not reachable from root"
+      }
+    },
+    {
+      "file": "site-basic.oversized-block.car",
+      "why": "an unreachable 32769-byte block (cap 32768)",
+      "expect": {
+        "ok": false,
+        "errorContains": "bytes (max"
+      }
+    },
+    {
+      "file": "site-basic.duplicate-block.car",
+      "why": "the root block written twice",
+      "expect": {
+        "ok": false,
+        "errorContains": "duplicate block"
+      }
+    },
+    {
+      "file": "site-basic.raw-root.car",
+      "why": "root is a raw block, not a directory",
+      "expect": {
+        "ok": false,
+        "errorContains": "must be a dag-pb directory"
+      }
+    },
+    {
+      "file": "dedupe-bomb.car",
+      "why": "one 16 KiB leaf referenced 384 times: 6 MiB of files from a tiny CAR",
+      "expect": {
+        "ok": false,
+        "errorContains": "expands to 6291456 bytes"
+      }
+    }
+  ]
+}

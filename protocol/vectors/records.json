@@ -1,0 +1,456 @@
+{
+  "description": "NAME_RECORD vectors. `signing` pins canonical JSON, the EIP-191 hash and the RFC 6979 signature; `cases` pins verifyRecord outcomes.",
+  "testKeys": [
+    {
+      "seed": "meshsites test vector key 1",
+      "privateKey": "0x06cc0af70f2487a07feaa75fc4029a9d3b84ae5e6f0ec7e923f862703fa476e0",
+      "address": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+      "note": "TEST ONLY: privateKey = keccak256(utf8(seed)). Never fund."
+    },
+    {
+      "seed": "meshsites test vector key 2",
+      "privateKey": "0x74a3f959936746d37710ca2845d540c842389cc414cbd4f1db06353ad4a13346",
+      "address": "0xd5af64fddb4709feacd2b0ecb88e9dff1a516e1b",
+      "note": "TEST ONLY."
+    }
+  ],
+  "signing": [
+    {
+      "record": {
+        "v": 1,
+        "name": "example.eth",
+        "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+        "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+        "seq": 12,
+        "ts": 1762470000,
+        "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+      },
+      "canonicalJson": "{\"cid\":\"bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy\",\"name\":\"example.eth\",\"origCid\":\"QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe\",\"seq\":12,\"signer\":\"0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df\",\"ts\":1762470000,\"v\":1}",
+      "canonicalJsonUtf8Hex": "7b22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226e616d65223a226578616d706c652e657468222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466222c227473223a313736323437303030302c2276223a317d",
+      "eip191Hash": "0x5921b887e8d1703b910a0b21662b994321080c93733dcf9272e4730b6438f9e6",
+      "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+    },
+    {
+      "record": {
+        "v": 1,
+        "name": "café.eth",
+        "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+        "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+        "seq": 3,
+        "ts": 1762470000,
+        "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+      },
+      "canonicalJson": "{\"cid\":\"bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy\",\"name\":\"café.eth\",\"origCid\":\"QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe\",\"seq\":3,\"signer\":\"0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df\",\"ts\":1762470000,\"v\":1}",
+      "canonicalJsonUtf8Hex": "7b22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226e616d65223a22636166c3a92e657468222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a332c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466222c227473223a313736323437303030302c2276223a317d",
+      "eip191Hash": "0xfde893430d30c5a328182161e35bbfe78dcd32cb500cb1cbd500783bd2786a34",
+      "sig": "0x781fe1c8da80b4936e11c7d827d12773c11445c055340cac77e6f0e8983b255d5c261b5892f90db164e8f2e4c4cf8c079c5efe766903e89604e315bc5b60d3271b"
+    }
+  ],
+  "cases": [
+    {
+      "id": "valid-verified",
+      "why": "signed by the trusted signer",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "expectedSigner": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": true,
+        "status": "verified",
+        "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+      }
+    },
+    {
+      "id": "valid-unverified",
+      "why": "valid signature, no trusted signer known (show \"Unverified name\")",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": true,
+        "status": "unverified",
+        "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+      }
+    },
+    {
+      "id": "valid-unicode",
+      "why": "non-ASCII name: EIP-191 length is UTF-8 bytes",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "café.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 3,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0x781fe1c8da80b4936e11c7d827d12773c11445c055340cac77e6f0e8983b255d5c261b5892f90db164e8f2e4c4cf8c079c5efe766903e89604e315bc5b60d3271b"
+      },
+      "options": {
+        "expectedSigner": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": true,
+        "status": "verified",
+        "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+      }
+    },
+    {
+      "id": "newer-seq",
+      "why": "seq 12 replaces cached seq 11",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "expectedSigner": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+        "cachedSeq": 11,
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": true,
+        "status": "verified",
+        "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+      }
+    },
+    {
+      "id": "stale-seq-lower",
+      "why": "seq 12 is older than cached seq 13",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "expectedSigner": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+        "cachedSeq": 13,
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "stale-seq"
+      }
+    },
+    {
+      "id": "stale-seq-equal",
+      "why": "replay of the cached seq",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "expectedSigner": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+        "cachedSeq": 12,
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "stale-seq"
+      }
+    },
+    {
+      "id": "tampered-cid",
+      "why": "cid changed after signing",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafkreihzaauexlawvjv5ieuwx6taubz5dsymgtnr6qteu2kxqtspn5rjfe",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "signer-mismatch"
+      }
+    },
+    {
+      "id": "tampered-seq",
+      "why": "seq bumped after signing",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 13,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "signer-mismatch"
+      }
+    },
+    {
+      "id": "wrong-signer",
+      "why": "a valid record from a key that is not trusted for the name",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0xd5af64fddb4709feacd2b0ecb88e9dff1a516e1b"
+        },
+        "sig": "0xedf90e06c727b0a7e0090f1b1f074668053f5b0d19320806c9874278725cbf421dc689f1ed5edde4abe6890771f7da16850eb0ee6869707be263ac9c2d8d61bc1c"
+      },
+      "options": {
+        "expectedSigner": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "not-authorized"
+      }
+    },
+    {
+      "id": "claimed-signer",
+      "why": "record names signer1 but key2 signed it",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xedf90e06c727b0a7e0090f1b1f074668053f5b0d19320806c9874278725cbf421dc689f1ed5edde4abe6890771f7da16850eb0ee6869707be263ac9c2d8d61bc1c"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "signer-mismatch"
+      }
+    },
+    {
+      "id": "high-s",
+      "why": "malleated (high-s) twin of a valid signature",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b7ac6eadf1b10b3767f141a5c9e6b58f5eb1438e987c3cfd94f83386ab4bb687861c"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad-signature"
+      }
+    },
+    {
+      "id": "future-ts",
+      "why": "ts more than 300s ahead of now",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762469699
+      },
+      "expect": {
+        "ok": false,
+        "reason": "future-ts"
+      }
+    },
+    {
+      "id": "uppercase-signer",
+      "why": "signer must be lowercase hex",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6EA2147F6874D28AAA3821B4C68C64FF7DB0C8DF"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "id": "extra-key",
+      "why": "unknown key in a v1 record",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df",
+          "extra": 1
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "id": "non-integer-seq",
+      "why": "seq must be an integer",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 1.5,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "id": "unnormalized-name",
+      "why": "name must be ENSIP-15 normalized",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "Example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "id": "cidv0-mesh-cid",
+      "why": "mesh cid must be CIDv1",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    }
+  ]
+}

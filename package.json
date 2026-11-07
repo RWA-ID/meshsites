@@ -1,0 +1,19 @@
+{
+  "name": "meshsites",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "protocol/ts",
+    "cli"
+  ],
+  "scripts": {
+    "test": "node --test --test-reporter=spec protocol/ts/test/*.test.ts cli/test/*.test.ts",
+    "vectors": "node protocol/ts/scripts/gen-vectors.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "viem": "2.57.10"
+  }
+}

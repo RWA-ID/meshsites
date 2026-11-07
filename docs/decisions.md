@@ -71,4 +71,4 @@ Evidence for every claim about bitchat is in `docs/bitchat-notes.md`.
 
 - Repo at `~/meshsites` (git initialised, nothing pushed). The bitchat reference clone is at `~/meshsites-ref/bitchat`, outside the repo. The fork itself goes into `ios/` at M2. **ASK:** create `RWA-ID/meshsites` on GitHub, public or private? Commits signed per the usual SSH key.
 - TS: one `protocol/ts` package shared by `cli/` and `web/`. Vectors in `protocol/vectors/*.json` are the contract both languages must pass.
-- Next: **M1** (CLI: `publish`, `verify`, `sign-record`, `verify-record` + vectors and tests). It doesn't depend on any ASK above.
+- M1 done 2026-11-06: CLI + vectors + 56 tests. Answered: 0x4D approved; repo starts private (RWA-ID/meshsites).

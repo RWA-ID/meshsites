@@ -1,0 +1,13 @@
+{
+  "name": "@meshsites/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "meshsites": "./src/main.ts"
+  },
+  "dependencies": {
+    "@adraffy/ens-normalize": "1.11.1",
+    "@meshsites/protocol": "0.0.0"
+  }
+}
