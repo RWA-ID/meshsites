@@ -31,6 +31,9 @@ import {
   verifyCar,
   verifyRecord,
   writeCar,
+  encodeMessage,
+  decodeMessage,
+  type MeshMessage,
 } from '../src/index.ts';
 
 const VEC = join(dirname(fileURLToPath(import.meta.url)), '../../vectors');
@@ -223,9 +226,64 @@ function canonicalVectors() {
   };
 }
 
+function wireVectors(rootCid: string) {
+  const root = CID.parse(rootCid);
+  const leaf = CID.parse('bafkreihzaauexlawvjv5ieuwx6taubz5dsymgtnr6qteu2kxqtspn5rjfe');
+  const reqId = hexToBytes('0102030405060708');
+  const msgs: { id: string; msg: MeshMessage }[] = [
+    { id: 'announce', msg: { t: 'announce', sites: [{ root, sizeBytes: 41002, blockCount: 9 }] } },
+    { id: 'name-record', msg: { t: 'name-record', signed: '{"record":{},"sig":"0x00"}' } },
+    { id: 'want-root', msg: { t: 'want', reqId, origTtl: 5, root } },
+    { id: 'want-name', msg: { t: 'want', reqId, origTtl: 5, name: 'café.eth' } },
+    { id: 'have', msg: { t: 'have', reqId, root, hops: 2, bulk: { p2pWifi: true, ble: true }, sizeBytes: 41002, blockCount: 9 } },
+    { id: 'block-req', msg: { t: 'block-req', root, cids: [root, leaf] } },
+    { id: 'block', msg: { t: 'block', cid: leaf, bytes: utf8ToBytes('hello') } },
+    { id: 'block-none', msg: { t: 'block-none', cid: leaf } },
+  ];
+  const valid = msgs.map(({ id, msg }) => {
+    const bytes = encodeMessage(msg);
+    const back = decodeMessage(bytes);
+    if (!back || back.t !== msg.t) throw new Error(`wire ${id} does not round-trip`);
+    return { id, hex: bytesToHex(bytes) };
+  });
+  const announceHex = valid[0].hex;
+  const blockNoneHex = valid[7].hex;
+  const cidHex = bytesToHex(leaf.bytes);
+  const len = (n: number) => n.toString(16).padStart(4, '0');
+  const invalid = [
+    { id: 'empty', hex: '', expect: 'invalid' },
+    { id: 'future-version', hex: '0201', expect: 'ignore' },
+    { id: 'unknown-subtype', hex: '0177', expect: 'ignore' },
+    { id: 'unknown-tag-skipped', hex: `${blockNoneHex}ee0002abcd`, expect: 'valid' },
+    { id: 'truncated-tlv', hex: announceHex.slice(0, -4), expect: 'invalid' },
+    { id: 'tlv-overrun', hex: '0112' + '09' + len(200) + cidHex, expect: 'invalid' },
+    { id: 'repeated-tag', hex: `${blockNoneHex}09${len(leaf.bytes.length)}${cidHex}`, expect: 'invalid' },
+    { id: 'cidv0-block', hex: '011209' + len(34) + bytesToHex(CID.parse('QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe').bytes), expect: 'invalid' },
+    { id: 'want-both-root-and-name', hex: '0103' + '01' + len(8) + '0102030405060708' + '04' + len(1) + '05' + '02' + len(root.bytes.length) + bytesToHex(root.bytes) + '03' + len(3) + bytesToHex(utf8ToBytes('a.b')), expect: 'invalid' },
+    { id: 'block-req-33', hex: '0110' + '02' + len(root.bytes.length) + bytesToHex(root.bytes) + `09${len(leaf.bytes.length)}${cidHex}`.repeat(33), expect: 'invalid' },
+  ];
+  for (const v of invalid) {
+    let got: string;
+    try {
+      got = decodeMessage(hexToBytes(v.hex)) ? 'valid' : 'ignore';
+    } catch {
+      got = 'invalid';
+    }
+    if (got !== v.expect) throw new Error(`wire vector ${v.id}: expected ${v.expect}, got ${got}`);
+  }
+  return {
+    description: 'DRAFT (pre-M3) MeshSites wire messages. payload = version u8 | subtype u8 | (tag u8, len u16 BE, value)*. "ignore" = unknown version/subtype (drop silently); "invalid" = malformed (drop and count against the peer).',
+    outerBitchatType: '0x4D',
+    noisePayloadType: '0x4D',
+    valid,
+    invalid,
+  };
+}
+
 await mkdir(VEC, { recursive: true });
 const car = await siteVectors();
 await writeFile(join(VEC, 'car.json'), json(car));
 await writeFile(join(VEC, 'records.json'), json(recordVectors(car.rootCid, car.origCidHint)));
 await writeFile(join(VEC, 'canonical-json.json'), json(canonicalVectors()));
+await writeFile(join(VEC, 'wire.json'), json(wireVectors(car.rootCid)));
 console.log(`vectors written to ${VEC}`);
