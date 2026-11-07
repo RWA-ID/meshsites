@@ -1,0 +1,10 @@
+{
+  "name": "@meshsites/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.ts",
+    "build": "node build.ts"
+  }
+}

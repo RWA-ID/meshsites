@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshSites node</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Mesh node <span id="me" class="mono muted"></span></h1>
+  <nav><a href="index.html">Simulator</a><a href="tab.html" aria-current="page">Multi-tab (WebRTC)</a><a href="viewer.html">Viewer</a></nav>
+  <span class="muted">One tab = one phone. Links are WebRTC data channels with BLE pacing applied in software.</span>
+</header>
+<div class="layout">
+  <section class="stack">
+    <div class="panel">
+      <h2>Neighbours</h2>
+      <p class="muted">Link tabs into a chain (A–B–C) to test multi-hop. “Block (debug)” is the forced-relay setting.</p>
+      <div id="peers" class="peers"></div>
+      <p class="row"><label>BLE loss per fragment (new links) <span class="row"><input id="loss" type="range" min="0" max="20" value="0"><span id="loss-v">0%</span></span></label> <button id="rename">Rename this node</button></p>
+    </div>
+    <div class="panel">
+      <h2>Open a site</h2>
+      <div class="row"><input id="target" type="text" value="example.eth" aria-label="ENS name or CID" style="flex:1;min-width:0"><button id="open" class="primary">Open</button></div>
+      <div id="progress-label" class="mono muted" style="margin-top:6px">idle</div>
+      <div id="result" style="margin-top:10px"></div>
+    </div>
+    <div class="panel">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </div>
+  </section>
+  <aside class="stack">
+    <div class="panel">
+      <h2>This node</h2>
+      <div id="state"></div>
+      <p class="row" style="margin-top:10px"><button id="gateway">Be the gateway (pin example.eth)</button><button id="trust">Trust example.eth signer</button></p>
+    </div>
+    <div class="panel">
+      <h2>How to run a 3-tab demo</h2>
+      <ol class="muted" style="padding-left:18px;margin:0">
+        <li>Open three tabs: <code>tab.html?name=A</code>, <code>?name=B</code>, <code>?name=C</code>.</li>
+        <li>In A: link B. In B: link C. (Don't link A–C.)</li>
+        <li>In A: “Be the gateway”. In C: “Trust example.eth signer”.</li>
+        <li>In C: Open <code>example.eth</code>. It arrives through B.</li>
+      </ol>
+    </div>
+  </aside>
+</div>
+<script type="module" src="dist/tab.js"></script>
+</body>
+</html>

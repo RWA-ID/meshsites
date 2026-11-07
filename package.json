@@ -4,11 +4,13 @@
   "type": "module",
   "workspaces": [
     "protocol/ts",
-    "cli"
+    "cli",
+    "web"
   ],
   "scripts": {
     "test": "node --test --test-reporter=spec protocol/ts/test/*.test.ts cli/test/*.test.ts",
-    "vectors": "node protocol/ts/scripts/gen-vectors.ts"
+    "vectors": "node protocol/ts/scripts/gen-vectors.ts",
+    "web": "node web/server.ts"
   },
   "engines": {
     "node": ">=22.18"

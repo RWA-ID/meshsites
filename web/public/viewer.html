@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshSites viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>MeshSites viewer</h1>
+  <nav><a href="index.html">Simulator</a><a href="tab.html">Multi-tab (WebRTC)</a><a href="viewer.html" aria-current="page">Viewer</a></nav>
+  <span class="muted">Sites render from verified local blocks only, through a service worker.</span>
+</header>
+<div class="layout">
+  <section class="panel">
+    <div id="site-head"></div>
+    <iframe id="frame" class="site" title="Offline site" hidden></iframe>
+  </section>
+  <aside class="stack">
+    <section class="panel">
+      <h2>Stored sites</h2>
+      <div id="sites" class="peers"></div>
+      <p><label>Import a .car file <input id="file" type="file" accept=".car,application/vnd.ipld.car"></label></p>
+      <p><span id="import-msg"></span></p>
+    </section>
+    <section class="panel">
+      <h2>No-network test</h2>
+      <p class="muted">Loads a probe site that tries to reach the network in several ways. Only its own files should load.</p>
+      <button id="probe" class="primary">Run the probe</button>
+      <div id="probe-out" class="stack" style="margin-top:10px"></div>
+      <iframe id="probe-frame" title="probe" style="width:1px;height:1px;border:0;position:absolute;left:-9999px"></iframe>
+    </section>
+  </aside>
+</div>
+<script type="module" src="dist/viewer.js"></script>
+</body>
+</html>

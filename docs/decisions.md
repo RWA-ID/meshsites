@@ -72,3 +72,14 @@ Evidence for every claim about bitchat is in `docs/bitchat-notes.md`.
 - Repo at `~/meshsites` (git initialised, nothing pushed). The bitchat reference clone is at `~/meshsites-ref/bitchat`, outside the repo. The fork itself goes into `ios/` at M2. **ASK:** create `RWA-ID/meshsites` on GitHub, public or private? Commits signed per the usual SSH key.
 - TS: one `protocol/ts` package shared by `cli/` and `web/`. Vectors in `protocol/vectors/*.json` are the contract both languages must pass.
 - M1 done 2026-11-06: CLI + vectors + 56 tests. Answered: 0x4D approved; repo starts private (RWA-ID/meshsites).
+
+## D9. Phase W outcomes (2026-11-06, draft wire format, still changeable before M3)
+
+- **Direct-session messages use one NoisePayloadType, `0x4D`**, with the same `version | subtype | TLV` encoding as the outer `0x4D` gossip. Sub-types `0x01-0x0F` are public gossip only and `0x10-0x1F` are direct only; a receiver rejects either kind in the wrong context. Vectors: `protocol/vectors/wire.json`.
+- **HAVE carries `sizeBytes` and `blockCount`**, so the requester enforces the 1 MiB cap *before* downloading (security checklist item 2).
+- **CIDs travel as binary CID bytes**, not strings (36 vs 59 bytes). Every gossip message is ≤ 72 bytes, so one BLE frame each.
+- **Expansion cap (4 MiB)** added to verification after the dedupe-bomb finding (SPEC §2.2 step 9).
+- **Open questions found by the simulator, for M3/M4:**
+  1. The fixed 3 s HAVE window is most of the time for small sites. Proposal: start pulling on the first adjacent bulk-capable HAVE.
+  2. With per-fragment loss, 16 KiB blocks over BLE are fragile (35 fragments each). We need per-block retry or smaller BLE batches.
+  3. Real relays are half-duplex, so multi-hop BLE is slower than simulated (`docs/benchmarks.md`).
