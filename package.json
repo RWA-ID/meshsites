@@ -11,7 +11,8 @@
     "test": "node --test --test-reporter=spec protocol/ts/test/*.test.ts cli/test/*.test.ts",
     "vectors": "node protocol/ts/scripts/gen-vectors.ts",
     "web": "node web/server.ts",
-    "build:static": "node web/build-static.ts"
+    "build:static": "node web/build-static.ts",
+    "pin": "node --env-file=.env.local web/pin.ts"
   },
   "engines": {
     "node": ">=22.18"
