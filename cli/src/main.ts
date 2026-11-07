@@ -55,10 +55,20 @@ function int(name: string, v: string | undefined): number | undefined {
   return Number(v);
 }
 
-function printTextRecords(signed: SignedNameRecord) {
+/**
+ * Print the ENS text records, and write the record value to a file: copying a
+ * 400-character line out of a terminal inserts spaces where it wrapped, which
+ * (correctly) breaks the signature.
+ */
+async function printTextRecords(signed: SignedNameRecord, signedPath: string) {
+  const txt = signedPath.replace(/\.json$/, '.txt');
+  await writeFile(txt, JSON.stringify(signed));
   out('ENS text records to set on ' + signed.record.name + ':');
   out(`  meshsites.signer = ${toChecksumAddress(signed.record.signer)}`);
   out(`  meshsites.record = ${JSON.stringify(signed)}`);
+  out();
+  out(`Don't copy meshsites.record from the terminal (line wraps add spaces). Use:`);
+  out(`  pbcopy < ${txt}`);
 }
 
 async function publish(args: string[]) {
@@ -119,7 +129,7 @@ async function publish(args: string[]) {
     await writeFile(signedPath, `${JSON.stringify(signed, null, 2)}\n`);
     out(`signed record → ${signedPath}`);
     out();
-    printTextRecords(signed);
+    await printTextRecords(signed, signedPath);
   } else {
     const recordPath = `${base}.record.json`;
     await writeFile(recordPath, `${JSON.stringify(record, null, 2)}\n`);
@@ -164,7 +174,7 @@ async function signRecordCmd(args: string[]) {
   await writeFile(path, `${JSON.stringify(signed, null, 2)}\n`);
   out(`signed record → ${path}`);
   out();
-  printTextRecords(signed);
+  await printTextRecords(signed, path);
   return 0;
 }
 
