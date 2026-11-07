@@ -34,6 +34,9 @@ import {
   encodeMessage,
   decodeMessage,
   type MeshMessage,
+  DEFAULT_GOSSIP_CONFIG,
+  type GossipConfig,
+  GossipPolicy,
 } from '../src/index.ts';
 
 const VEC = join(dirname(fileURLToPath(import.meta.url)), '../../vectors');
@@ -292,10 +295,255 @@ function wireVectors(rootCid: string) {
   };
 }
 
+// ---------------- gossip.json (M3) ----------------
+
+interface GossipStepIn {
+  at: number;
+  sender: string;
+  recipient?: string;
+  ttl: number;
+  authenticated?: boolean;
+  msg?: MeshMessage;
+  payloadHex?: string;
+  /** Hand-written: relay / drop / spam, plus have/name when they apply. */
+  expect: { relay: boolean; drop?: string; spam?: boolean; have?: boolean; name?: { name: string; status: string }; sends?: number };
+}
+
+interface GossipScenarioIn {
+  id: string;
+  why: string;
+  config?: Partial<GossipConfig>;
+  setup?: { sites?: { root: string; sizeBytes: number; blockCount: number }[]; signers?: Record<string, string>; records?: string[] };
+  nowSec?: number;
+  steps: GossipStepIn[];
+}
+
+function gossipVectors(rootCid: string, origCid: string) {
+  const SELF = 'aaaaaaaaaaaaaaaa';
+  const B = 'b1b1b1b1b1b1b1b1';
+  const C = 'c1c1c1c1c1c1c1c1';
+  const root = CID.parse(rootCid);
+  const other = CID.parse('bafkreihzaauexlawvjv5ieuwx6taubz5dsymgtnr6qteu2kxqtspn5rjfe');
+  const signer1 = addressFromPrivateKey(key1);
+  const ts = 1762470000;
+  const nowSec = ts + 60;
+  const base: NameRecord = { v: 1, name: 'example.eth', cid: rootCid, origCid, seq: 12, ts, signer: signer1 };
+  const text = (r: SignedNameRecord) => JSON.stringify(r);
+  const good = text(signRecord(base, key1));
+  const older = text(signRecord({ ...base, seq: 11 }, key1));
+  const byKey2 = text(signRecord({ ...base, seq: 13, signer: addressFromPrivateKey(key2) }, key2));
+  const tampered = text({ record: { ...base, seq: 13 }, sig: signRecord(base, key1).sig });
+  const badSig = (seq: number) => text({ record: { ...base, seq }, sig: `0x${'11'.repeat(64)}1b` });
+  const rid = (n: number) => hexToBytes(n.toString(16).padStart(16, '0'));
+  const want = (n: number): MeshMessage => ({ t: 'want', reqId: rid(n), origTtl: 5, root });
+  const announce: MeshMessage = { t: 'announce', sites: [{ root, sizeBytes: 41002, blockCount: 9 }] };
+  const have: MeshMessage = { t: 'have', reqId: rid(1), root, hops: 1, bulk: { p2pWifi: true, ble: true }, sizeBytes: 41002, blockCount: 9 };
+  const site = { root: rootCid, sizeBytes: 41002, blockCount: 9 };
+  const ok = { relay: true };
+
+  const scenarios: GossipScenarioIn[] = [
+    {
+      id: 'unknown-subtype-relayed',
+      why: 'a sub-type from a newer version is relayed untouched, as an unpatched bitchat node would',
+      steps: [
+        { at: 0, sender: B, ttl: 5, payloadHex: '0177', expect: ok },
+        { at: 0, sender: B, ttl: 5, payloadHex: '0201', expect: ok },
+      ],
+    },
+    {
+      id: 'malformed-dropped',
+      why: 'a truncated TLV is dropped, not relayed, and counts against the sender',
+      steps: [{ at: 0, sender: B, ttl: 3, payloadHex: bytesToHex(encodeMessage(announce)).slice(0, -4), expect: { relay: false, drop: 'malformed', spam: true } }],
+    },
+    {
+      id: 'direct-subtype-on-gossip',
+      why: 'BLOCK_NONE belongs inside a Noise session; on public gossip it is an attack',
+      steps: [{ at: 0, sender: B, ttl: 1, msg: { t: 'block-none', cid: other }, expect: { relay: false, drop: 'not-public', spam: true } }],
+    },
+    {
+      id: 'ttl-caps',
+      why: 'old relays do not know our caps, so a packet above the originator TTL was forged or mis-sent: drop it',
+      steps: [
+        { at: 0, sender: B, ttl: 3, msg: announce, expect: ok },
+        { at: 0, sender: C, ttl: 4, msg: announce, expect: { relay: false, drop: 'ttl-over-cap', spam: true } },
+        { at: 0, sender: C, ttl: 6, msg: want(1), expect: { relay: false, drop: 'ttl-over-cap', spam: true } },
+        { at: 0, sender: C, ttl: 6, recipient: B, msg: have, expect: { relay: false, drop: 'ttl-over-cap', spam: true } },
+        { at: 0, sender: C, ttl: 8, msg: { t: 'name-record', signed: good }, expect: { relay: false, drop: 'ttl-over-cap', spam: true } },
+      ],
+    },
+    {
+      id: 'announce-rate-limit',
+      why: 'one ANNOUNCE per sender per half interval (30 s by default)',
+      steps: [
+        { at: 0, sender: B, ttl: 3, msg: announce, expect: ok },
+        { at: 10_000, sender: B, ttl: 2, msg: announce, expect: { relay: false, drop: 'rate-limited', spam: true } },
+        { at: 10_000, sender: C, ttl: 3, msg: announce, expect: ok },
+        { at: 30_000, sender: B, ttl: 3, msg: announce, expect: ok },
+      ],
+    },
+    {
+      id: 'want-dedupe',
+      why: 'the same reqId arriving over a second path is a duplicate: not relayed, not blamed',
+      steps: [
+        { at: 0, sender: B, ttl: 5, msg: want(1), expect: ok },
+        { at: 50, sender: B, ttl: 4, msg: want(1), expect: { relay: false, drop: 'duplicate', spam: false } },
+      ],
+    },
+    {
+      id: 'want-answered-with-have',
+      why: 'a seeder holding the site answers with a directed HAVE; hops = origTtl - ttl + 1, HAVE TTL = min(5, hops + 1)',
+      setup: { sites: [site] },
+      steps: [
+        { at: 0, sender: B, ttl: 4, msg: want(1), expect: { relay: true, sends: 1 } },
+        { at: 0, sender: C, ttl: 5, msg: { t: 'want', reqId: rid(2), origTtl: 5, root: other }, expect: { relay: true, sends: 0 } },
+        // A lying origTtl (below the arriving TTL) clamps to hops = 1, HAVE TTL 2.
+        { at: 0, sender: C, ttl: 5, msg: { t: 'want', reqId: rid(3), origTtl: 0, root }, expect: { relay: true, sends: 1 } },
+      ],
+    },
+    {
+      id: 'want-not-seeding',
+      why: 'a node with seeding off never answers',
+      config: { seeding: false },
+      setup: { sites: [site] },
+      steps: [{ at: 0, sender: B, ttl: 5, msg: want(1), expect: { relay: true, sends: 0 } }],
+    },
+    {
+      id: 'want-rate-limit',
+      why: 'per-sender bucket: 8 at once, then one per 2 s',
+      steps: [
+        ...Array.from({ length: 8 }, (_, i) => ({ at: 0, sender: B, ttl: 5, msg: want(10 + i), expect: ok })),
+        { at: 0, sender: B, ttl: 5, msg: want(20), expect: { relay: false, drop: 'rate-limited', spam: true } },
+        { at: 0, sender: C, ttl: 5, msg: want(21), expect: ok },
+        { at: 2_000, sender: B, ttl: 5, msg: want(22), expect: ok },
+        { at: 2_000, sender: B, ttl: 5, msg: want(23), expect: { relay: false, drop: 'rate-limited', spam: true } },
+      ],
+    },
+    {
+      id: 'want-unauthenticated-shared-bucket',
+      why: 'unverifiable senders share one bucket, so rotating the claimed sender ID does not buy more WANTs',
+      steps: [
+        ...Array.from({ length: 8 }, (_, i) => ({ at: 0, sender: `d${i}`.padEnd(16, '0'), ttl: 5, authenticated: false, msg: want(30 + i), expect: ok })),
+        { at: 0, sender: 'e0'.padEnd(16, '0'), ttl: 5, authenticated: false, msg: want(40), expect: { relay: false, drop: 'rate-limited', spam: true } },
+        { at: 0, sender: B, ttl: 5, msg: want(41), expect: ok },
+      ],
+    },
+    {
+      id: 'have-recipient',
+      why: 'a HAVE for us is consumed; a HAVE for someone else is relayed',
+      steps: [
+        { at: 0, sender: B, ttl: 2, recipient: SELF, msg: have, expect: { relay: false, have: true } },
+        { at: 0, sender: B, ttl: 2, recipient: C, msg: have, expect: ok },
+      ],
+    },
+    {
+      id: 'name-record-unverified-then-duplicate',
+      why: 'a valid record with no trusted signer is stored as unverified; the same record again is a duplicate',
+      nowSec,
+      steps: [
+        { at: 0, sender: B, ttl: 7, msg: { t: 'name-record', signed: good }, expect: { relay: true, name: { name: 'example.eth', status: 'unverified' } } },
+        { at: 100, sender: C, ttl: 6, msg: { t: 'name-record', signed: good }, expect: { relay: false, drop: 'duplicate', spam: false } },
+      ],
+    },
+    {
+      id: 'name-record-verified',
+      why: 'signed by the signer learned online',
+      nowSec,
+      setup: { signers: { 'example.eth': signer1 } },
+      steps: [{ at: 0, sender: B, ttl: 7, msg: { t: 'name-record', signed: good }, expect: { relay: true, name: { name: 'example.eth', status: 'verified' } } }],
+    },
+    {
+      id: 'name-record-rejections',
+      why: 'invalid records are not relayed; a stale seq is normal on a mesh and not blamed',
+      nowSec,
+      setup: { signers: { 'example.eth': signer1 }, records: [good] },
+      steps: [
+        { at: 0, sender: B, ttl: 7, msg: { t: 'name-record', signed: byKey2 }, expect: { relay: false, drop: 'record:not-authorized', spam: true } },
+        { at: 0, sender: B, ttl: 7, msg: { t: 'name-record', signed: tampered }, expect: { relay: false, drop: 'record:signer-mismatch', spam: true } },
+        { at: 0, sender: C, ttl: 7, msg: { t: 'name-record', signed: older }, expect: { relay: false, drop: 'record:stale-seq', spam: false } },
+        { at: 0, sender: C, ttl: 7, msg: { t: 'name-record', signed: '{"record":' }, expect: { relay: false, drop: 'record:malformed', spam: true } },
+      ],
+    },
+    {
+      id: 'name-record-future-ts',
+      why: 'ts more than 300 s ahead of the receiver clock',
+      nowSec: ts - 301,
+      steps: [{ at: 0, sender: B, ttl: 7, msg: { t: 'name-record', signed: good }, expect: { relay: false, drop: 'record:future-ts', spam: true } }],
+    },
+    {
+      id: 'name-record-bucket',
+      why: 'per-name bucket (4 at once) stops a flood of bad records for one name before signature checks',
+      nowSec,
+      steps: [
+        ...[20, 21, 22, 23].map((seq) => ({ at: 0, sender: B, ttl: 7, msg: { t: 'name-record', signed: badSig(seq) } as MeshMessage, expect: { relay: false, drop: 'record:bad-signature', spam: true } })),
+        { at: 0, sender: B, ttl: 7, msg: { t: 'name-record', signed: badSig(24) }, expect: { relay: false, drop: 'rate-limited', spam: false } },
+      ],
+    },
+    {
+      id: 'want-name-answered',
+      why: 'a node holding the record re-broadcasts the exact signed text, at most once per 5 s per name',
+      nowSec,
+      setup: { records: [good] },
+      steps: [
+        { at: 0, sender: B, ttl: 5, msg: { t: 'want', reqId: rid(50), origTtl: 5, name: 'example.eth' }, expect: { relay: true, sends: 1 } },
+        { at: 1_000, sender: C, ttl: 5, msg: { t: 'want', reqId: rid(51), origTtl: 5, name: 'example.eth' }, expect: { relay: true, sends: 0 } },
+        { at: 5_000, sender: C, ttl: 5, msg: { t: 'want', reqId: rid(52), origTtl: 5, name: 'example.eth' }, expect: { relay: true, sends: 1 } },
+      ],
+    },
+  ];
+
+  const out = scenarios.map((sc) => {
+    const g = new GossipPolicy(SELF, sc.config);
+    const now = sc.nowSec ?? nowSec;
+    for (const s of sc.setup?.sites ?? []) g.sites.set(s.root, { root: CID.parse(s.root), sizeBytes: s.sizeBytes, blockCount: s.blockCount, complete: true });
+    for (const [n, a] of Object.entries(sc.setup?.signers ?? {})) g.trust(n, a);
+    for (const r of sc.setup?.records ?? []) g.addRecord(r, now);
+    const steps = sc.steps.map((st, i) => {
+      const payloadHex = st.payloadHex ?? bytesToHex(encodeMessage(st.msg!));
+      const auth = st.authenticated ?? true;
+      const v = g.receive({ sender: st.sender, recipient: st.recipient, ttl: st.ttl, payload: hexToBytes(payloadHex), authenticated: auth }, st.at, now);
+      const e = st.expect;
+      const fail = (what: string) => {
+        throw new Error(`gossip ${sc.id} step ${i}: ${what} (got ${JSON.stringify({ relay: v.relay, drop: v.drop, spam: v.spam, sends: v.send.length })})`);
+      };
+      if (v.relay !== e.relay) fail('relay');
+      if (v.drop !== e.drop) fail('drop');
+      if (v.spam !== (e.spam ?? false)) fail('spam');
+      if (!!v.have !== !!e.have) fail('have');
+      if ((v.name?.name ?? null) !== (e.name?.name ?? null) || (v.name?.status ?? null) !== (e.name?.status ?? null)) fail('name');
+      if (e.sends !== undefined && v.send.length !== e.sends) fail('sends');
+      return {
+        at: st.at,
+        sender: st.sender,
+        ...(st.recipient ? { recipient: st.recipient } : {}),
+        ttl: st.ttl,
+        authenticated: auth,
+        payloadHex,
+        expect: {
+          relay: v.relay,
+          ...(v.drop ? { drop: v.drop } : {}),
+          spam: v.spam,
+          ...(v.have ? { have: { from: v.have.from, reqIdHex: bytesToHex(v.have.reqId) } } : {}),
+          ...(v.name ? { name: v.name } : {}),
+          send: v.send.map((o) => ({ payloadHex: bytesToHex(encodeMessage(o.msg)), ttl: o.ttl, ...(o.recipient ? { recipient: o.recipient } : {}) })),
+        },
+      };
+    });
+    return { id: sc.id, why: sc.why, config: { ...DEFAULT_GOSSIP_CONFIG, ...sc.config }, setup: sc.setup ?? {}, nowSec: now, steps };
+  });
+
+  return {
+    description:
+      'M3 gossip policy. Each scenario starts a fresh node with id `self` and `config`, applies `setup` (sites are complete; records are added with nowSec), then feeds `steps` in order. `at` is the node clock in ms; nowSec is the wall clock for record checks. A receiver must produce exactly `expect`: relay or not, the drop reason code, whether the sender is blamed, a consumed HAVE, an accepted name, and the packets to send (payload, TTL, recipient) in order.',
+    self: SELF,
+    scenarios: out,
+  };
+}
+
 await mkdir(VEC, { recursive: true });
 const car = await siteVectors();
 await writeFile(join(VEC, 'car.json'), json(car));
 await writeFile(join(VEC, 'records.json'), json(recordVectors(car.rootCid, car.origCidHint)));
 await writeFile(join(VEC, 'canonical-json.json'), json(canonicalVectors()));
 await writeFile(join(VEC, 'wire.json'), json(wireVectors(car.rootCid)));
+await writeFile(join(VEC, 'gossip.json'), json(gossipVectors(car.rootCid, car.origCidHint)));
 console.log(`vectors written to ${VEC}`);

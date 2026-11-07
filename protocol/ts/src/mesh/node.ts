@@ -11,18 +11,9 @@ import { CID } from 'multiformats/cid';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { checkBlock, readCar, verifyDag, type BlockSource } from '../car.ts';
 import { LIMITS } from '../limits.ts';
-import { verifyRecord, type NameRecord, type RecordStatus, type SignedNameRecord } from '../record.ts';
-import {
-  decodeMessage,
-  encodeMessage,
-  MAX_ANNOUNCE_ENTRIES,
-  MAX_BLOCK_REQ,
-  type MeshMessage,
-  SUB,
-  subtypeOf,
-  TTL,
-  WireError,
-} from '../wire.ts';
+import { GossipPolicy, type Outgoing, type StoredName } from '../gossip.ts';
+import { type NameRecord, type RecordStatus, type SignedNameRecord } from '../record.ts';
+import { decodeMessage, encodeMessage, MAX_BLOCK_REQ, type MeshMessage, SUB, subtypeOf, TTL } from '../wire.ts';
 import { BITCHAT, type BitchatRadio, type LinkKind, messageId, type RadioApp, type SimPacket } from './radio.ts';
 import type { Scheduler } from './scheduler.ts';
 
@@ -86,18 +77,10 @@ const hex = (b: Uint8Array) => bytesToHex(b);
 export class MeshSitesNode implements RadioApp, BlockSource {
   readonly opts: NodeOptions;
   readonly blocks = new Map<string, Uint8Array>();
-  readonly sites = new Map<string, SiteState>();
-  readonly names = new Map<string, { signed: SignedNameRecord; status: RecordStatus }>();
-  /** name → trusted signer (learned online). */
-  readonly signers = new Map<string, string>();
-  /** root → peer → hops, from ANNOUNCEs. */
-  readonly heard = new Map<string, Map<string, { hops: number; at: number }>>();
-  readonly spam = new Map<string, number>();
+  /** Gossip rules shared with the iOS app (protocol/vectors/gossip.json). */
+  readonly gossip: GossipPolicy;
   listeners: ((e: NodeEvent) => void)[] = [];
 
-  private seenReq = new Map<string, number>();
-  private lastAnnounceFrom = new Map<string, number>();
-  private lastNameBroadcast = new Map<string, number>();
   private noRelay = new Set<string>();
   private pendingHave = new Map<string, (h: Extract<MeshMessage, { t: 'have' }> & { from: string }) => void>();
   private nameWaiters = new Map<string, (() => void)[]>();
@@ -112,7 +95,28 @@ export class MeshSitesNode implements RadioApp, BlockSource {
     this.sched = sched;
     this.rand = rand;
     this.opts = { ...DEFAULT_NODE_OPTIONS, ...opts };
+    this.gossip = new GossipPolicy(radio.peerId, {
+      seeding: this.opts.seeding,
+      bulkCapable: this.opts.bulkCapable,
+      announceIntervalMs: this.opts.announceIntervalMs,
+    });
     radio.app = this;
+  }
+
+  get sites(): Map<string, SiteState> {
+    return this.gossip.sites;
+  }
+  get names(): Map<string, StoredName> {
+    return this.gossip.names;
+  }
+  get signers(): Map<string, string> {
+    return this.gossip.signers;
+  }
+  get heard() {
+    return this.gossip.heard;
+  }
+  get spam() {
+    return this.gossip.spam;
   }
 
   get id() {
@@ -126,7 +130,7 @@ export class MeshSitesNode implements RadioApp, BlockSource {
     this.emit({ kind: 'log', node: this.radio.name, msg });
   }
   private flag(peer: string) {
-    this.spam.set(peer, (this.spam.get(peer) ?? 0) + 1);
+    this.gossip.spam.set(peer, (this.gossip.spam.get(peer) ?? 0) + 1);
   }
 
   get(cid: CID) {
@@ -153,23 +157,23 @@ export class MeshSitesNode implements RadioApp, BlockSource {
 
   /** Learn a trusted signer for a name (done while online: text record / owner). */
   trust(name: string, signer: string) {
-    this.signers.set(name, signer.toLowerCase());
+    this.gossip.trust(name, signer);
   }
 
   /** Add a signed record (gateway: from the meshsites.record text record). */
-  addRecord(signed: SignedNameRecord): RecordStatus {
-    const res = verifyRecord(signed, {
-      expectedSigner: this.signers.get(signed.record.name),
-      cachedSeq: this.names.get(signed.record.name)?.signed.record.seq,
-      now: Math.floor(Date.now() / 1000),
-    });
-    if (!res.ok) throw new Error(`${res.reason}: ${res.detail}`);
-    this.names.set(res.record.name, { signed, status: res.status });
-    this.emit({ kind: 'name', node: this.radio.name, name: res.record.name, root: res.record.cid, status: res.status });
-    return res.status;
+  addRecord(signed: SignedNameRecord | string): RecordStatus {
+    const text = typeof signed === 'string' ? signed : JSON.stringify(signed);
+    const status = this.gossip.addRecord(text, Math.floor(Date.now() / 1000));
+    const n = [...this.gossip.names.entries()].find(([, v]) => v.signed === text);
+    if (n) this.emit({ kind: 'name', node: this.radio.name, name: n[0], root: n[1].root, status });
+    return status;
   }
 
   // ---------------- gossip out ----------------
+
+  private sendOut(o: Outgoing) {
+    this.sendPublic(o.msg, o.ttl, o.recipient);
+  }
 
   private sendPublic(m: MeshMessage, ttl: number, recipient?: string) {
     const p: SimPacket = { type: BITCHAT.type.meshSites, sender: this.id, recipient, ttl, ts: this.radio.nextTs(), payload: encodeMessage(m) };
@@ -186,10 +190,8 @@ export class MeshSitesNode implements RadioApp, BlockSource {
   }
 
   announce() {
-    if (!this.opts.seeding) return;
-    const sites = [...this.sites.values()].filter((s) => s.complete).slice(-MAX_ANNOUNCE_ENTRIES);
-    if (!sites.length) return;
-    this.sendPublic({ t: 'announce', sites: sites.map((s) => ({ root: s.root, sizeBytes: s.sizeBytes, blockCount: s.blockCount })) }, TTL.announce);
+    const o = this.gossip.announce();
+    if (o) this.sendOut(o);
   }
 
   stop() {
@@ -226,92 +228,21 @@ export class MeshSitesNode implements RadioApp, BlockSource {
     return !this.noRelay.has(messageId(p));
   }
 
-  onPacket(p: SimPacket, from: string) {
-    const id = messageId(p);
-    const stop = (why?: string, spam = false) => {
+  onPacket(p: SimPacket, _from: string) {
+    // The simulator has no packet signatures; every sender counts as authenticated.
+    const v = this.gossip.receive({ sender: p.sender, recipient: p.recipient, ttl: p.ttl, payload: p.payload, authenticated: true }, this.sched.now(), Math.floor(Date.now() / 1000));
+    if (!v.relay) {
+      const id = messageId(p);
       this.noRelay.add(id);
       if (this.noRelay.size > 2000) this.noRelay.delete(this.noRelay.values().next().value!);
-      if (spam) this.flag(p.sender);
-      if (why) this.log(`drop ${this.label(p)} from ${p.sender.slice(0, 4)}: ${why}`);
-    };
-    let m: MeshMessage | null;
-    try {
-      m = decodeMessage(p.payload);
-    } catch (e) {
-      return stop((e as WireError).message, true);
     }
-    if (!m) return; // unknown version/sub-type: relay as bitchat would
-    const cap = ({ announce: TTL.announce, 'name-record': TTL.nameRecord, want: TTL.want, have: TTL.have } as Record<string, number>)[m.t];
-    if (cap === undefined) return stop(`${m.t} is not allowed on public gossip`, true);
-    if (p.ttl > cap) return stop(`TTL ${p.ttl} above cap ${cap}`, true);
-    const now = this.sched.now();
-
-    switch (m.t) {
-      case 'announce': {
-        const last = this.lastAnnounceFrom.get(p.sender);
-        // Half the interval: tolerates delivery jitter and throttled timers, still stops a flood.
-        if (last !== undefined && now - last < this.opts.announceIntervalMs * 0.5) return stop('announce rate limit', true);
-        this.lastAnnounceFrom.set(p.sender, now);
-        const hops = TTL.announce - p.ttl + 1;
-        for (const s of m.sites) {
-          const k = s.root.toString();
-          const map = this.heard.get(k) ?? new Map();
-          map.set(p.sender, { hops, at: now });
-          this.heard.set(k, map);
-        }
-        return;
-      }
-      case 'name-record': {
-        let signed: SignedNameRecord;
-        try {
-          signed = JSON.parse(m.signed);
-        } catch {
-          return stop('record is not JSON', true);
-        }
-        const name = (signed as { record?: { name?: unknown } })?.record?.name;
-        const cached = typeof name === 'string' ? this.names.get(name) : undefined;
-        const res = verifyRecord(signed, {
-          expectedSigner: typeof name === 'string' ? this.signers.get(name) : undefined,
-          cachedSeq: cached?.signed.record.seq,
-          now: Math.floor(Date.now() / 1000),
-        });
-        if (!res.ok) return stop(res.reason, res.reason !== 'stale-seq');
-        this.names.set(res.record.name, { signed, status: res.status });
-        this.emit({ kind: 'name', node: this.radio.name, name: res.record.name, root: res.record.cid, status: res.status });
-        for (const w of this.nameWaiters.get(res.record.name) ?? []) w();
-        this.nameWaiters.delete(res.record.name);
-        return;
-      }
-      case 'want': {
-        const rk = hex(m.reqId);
-        if (this.seenReq.has(rk)) return stop();
-        this.seenReq.set(rk, now);
-        if (this.seenReq.size > 1000) this.seenReq.delete(this.seenReq.keys().next().value!);
-        const hops = m.origTtl - p.ttl + 1;
-        if (m.root && this.opts.seeding) {
-          const s = this.sites.get(m.root.toString());
-          if (s?.complete) {
-            this.sendPublic(
-              { t: 'have', reqId: m.reqId, root: s.root, hops, bulk: { p2pWifi: this.opts.bulkCapable, ble: true }, sizeBytes: s.sizeBytes, blockCount: s.blockCount },
-              Math.min(TTL.have, hops + 1),
-              p.sender,
-            );
-          }
-        } else if (m.name) {
-          const n = this.names.get(m.name);
-          const last = this.lastNameBroadcast.get(m.name) ?? -Infinity;
-          if (n && now - last > 5000) {
-            this.lastNameBroadcast.set(m.name, now);
-            this.sendPublic({ t: 'name-record', signed: JSON.stringify(n.signed) }, TTL.nameRecord);
-          }
-        }
-        return;
-      }
-      case 'have': {
-        if (p.recipient !== this.id) return;
-        this.pendingHave.get(hex(m.reqId))?.({ ...m, from: p.sender });
-        return;
-      }
+    if (v.drop && v.drop !== 'duplicate') this.log(`drop ${this.label(p)} from ${p.sender.slice(0, 4)}: ${v.drop}`);
+    for (const o of v.send) this.sendOut(o);
+    if (v.have) this.pendingHave.get(hex(v.have.reqId))?.(v.have);
+    if (v.name) {
+      this.emit({ kind: 'name', node: this.radio.name, name: v.name.name, root: v.name.root, status: v.name.status });
+      for (const w of this.nameWaiters.get(v.name.name) ?? []) w();
+      this.nameWaiters.delete(v.name.name);
     }
   }
 
@@ -379,7 +310,7 @@ export class MeshSitesNode implements RadioApp, BlockSource {
       n = this.names.get(name);
       if (!n) throw new Error(`no NAME_RECORD for ${name} within ${this.opts.nameWaitMs} ms`);
     }
-    return { record: n.signed.record, status: n.status };
+    return { record: (JSON.parse(n.signed) as SignedNameRecord).record, status: n.status };
   }
 
   /** Open a name or a raw CID. */

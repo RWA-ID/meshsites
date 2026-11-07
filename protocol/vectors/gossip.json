@@ -1,0 +1,1214 @@
+{
+  "description": "M3 gossip policy. Each scenario starts a fresh node with id `self` and `config`, applies `setup` (sites are complete; records are added with nowSec), then feeds `steps` in order. `at` is the node clock in ms; nowSec is the wall clock for record checks. A receiver must produce exactly `expect`: relay or not, the drop reason code, whether the sender is blamed, a consumed HAVE, an accepted name, and the packets to send (payload, TTL, recipient) in order.",
+  "self": "aaaaaaaaaaaaaaaa",
+  "scenarios": [
+    {
+      "id": "unknown-subtype-relayed",
+      "why": "a sub-type from a newer version is relayed untouched, as an unpatched bitchat node would",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0177",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0201",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "malformed-dropped",
+      "why": "a truncated TLV is dropped, not relayed, and counts against the sender",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 3,
+          "authenticated": true,
+          "payloadHex": "01010b002a0000a02a0009017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28",
+          "expect": {
+            "relay": false,
+            "drop": "malformed",
+            "spam": true,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "direct-subtype-on-gossip",
+      "why": "BLOCK_NONE belongs inside a Noise session; on public gossip it is an attack",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 1,
+          "authenticated": true,
+          "payloadHex": "011209002401551220f900284bac16aa6bd41296bfa60a073d1cb0c34db1f4264a695784e4f6f62929",
+          "expect": {
+            "relay": false,
+            "drop": "not-public",
+            "spam": true,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "ttl-caps",
+      "why": "old relays do not know our caps, so a packet above the originator TTL was forged or mis-sent: drop it",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 3,
+          "authenticated": true,
+          "payloadHex": "01010b002a0000a02a0009017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 4,
+          "authenticated": true,
+          "payloadHex": "01010b002a0000a02a0009017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": false,
+            "drop": "ttl-over-cap",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 6,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000104000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": false,
+            "drop": "ttl-over-cap",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "recipient": "b1b1b1b1b1b1b1b1",
+          "ttl": 6,
+          "authenticated": true,
+          "payloadHex": "01040100080000000000000001020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be05000101060001030700040000a02a0800020009",
+          "expect": {
+            "relay": false,
+            "drop": "ttl-over-cap",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 8,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+          "expect": {
+            "relay": false,
+            "drop": "ttl-over-cap",
+            "spam": true,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "announce-rate-limit",
+      "why": "one ANNOUNCE per sender per half interval (30 s by default)",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 3,
+          "authenticated": true,
+          "payloadHex": "01010b002a0000a02a0009017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 10000,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 2,
+          "authenticated": true,
+          "payloadHex": "01010b002a0000a02a0009017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": false,
+            "drop": "rate-limited",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 10000,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 3,
+          "authenticated": true,
+          "payloadHex": "01010b002a0000a02a0009017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 30000,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 3,
+          "authenticated": true,
+          "payloadHex": "01010b002a0000a02a0009017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "want-dedupe",
+      "why": "the same reqId arriving over a second path is a duplicate: not relayed, not blamed",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000104000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 50,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 4,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000104000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": false,
+            "drop": "duplicate",
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "want-answered-with-have",
+      "why": "a seeder holding the site answers with a directed HAVE; hops = origTtl - ttl + 1, HAVE TTL = min(5, hops + 1)",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {
+        "sites": [
+          {
+            "root": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+            "sizeBytes": 41002,
+            "blockCount": 9
+          }
+        ]
+      },
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 4,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000104000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": [
+              {
+                "payloadHex": "01040100080000000000000001020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be05000102060001030700040000a02a0800020009",
+                "ttl": 3,
+                "recipient": "b1b1b1b1b1b1b1b1"
+              }
+            ]
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "010301000800000000000000020400010502002401551220f900284bac16aa6bd41296bfa60a073d1cb0c34db1f4264a695784e4f6f62929",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000304000100020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": [
+              {
+                "payloadHex": "01040100080000000000000003020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be05000101060001030700040000a02a0800020009",
+                "ttl": 2,
+                "recipient": "c1c1c1c1c1c1c1c1"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "want-not-seeding",
+      "why": "a node with seeding off never answers",
+      "config": {
+        "seeding": false,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {
+        "sites": [
+          {
+            "root": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+            "sizeBytes": 41002,
+            "blockCount": 9
+          }
+        ]
+      },
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000104000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "want-rate-limit",
+      "why": "per-sender bucket: 8 at once, then one per 2 s",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000a04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000b04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000c04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000d04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000e04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000000f04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000001004000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000001104000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000001404000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": false,
+            "drop": "rate-limited",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000001504000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 2000,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000001604000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 2000,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000001704000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": false,
+            "drop": "rate-limited",
+            "spam": true,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "want-unauthenticated-shared-bucket",
+      "why": "unverifiable senders share one bucket, so rotating the claimed sender ID does not buy more WANTs",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "d000000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000001e04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "d100000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000001f04000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "d200000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000002004000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "d300000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000002104000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "d400000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000002204000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "d500000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000002304000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "d600000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000002404000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "d700000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000002504000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "e000000000000000",
+          "ttl": 5,
+          "authenticated": false,
+          "payloadHex": "0103010008000000000000002804000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": false,
+            "drop": "rate-limited",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "0103010008000000000000002904000105020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "have-recipient",
+      "why": "a HAVE for us is consumed; a HAVE for someone else is relayed",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "recipient": "aaaaaaaaaaaaaaaa",
+          "ttl": 2,
+          "authenticated": true,
+          "payloadHex": "01040100080000000000000001020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be05000101060001030700040000a02a0800020009",
+          "expect": {
+            "relay": false,
+            "spam": false,
+            "have": {
+              "from": "b1b1b1b1b1b1b1b1",
+              "reqIdHex": "0000000000000001"
+            },
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "recipient": "c1c1c1c1c1c1c1c1",
+          "ttl": 2,
+          "authenticated": true,
+          "payloadHex": "01040100080000000000000001020024017012203d31b9d247d8fc4ced1cc895fe14f112911552e0f4ee95b233ba06821d28f5be05000101060001030700040000a02a0800020009",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "name-record-unverified-then-duplicate",
+      "why": "a valid record with no trusted signer is stored as unverified; the same record again is a duplicate",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "name": {
+              "name": "example.eth",
+              "root": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+              "status": "unverified"
+            },
+            "send": []
+          }
+        },
+        {
+          "at": 100,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 6,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+          "expect": {
+            "relay": false,
+            "drop": "duplicate",
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "name-record-verified",
+      "why": "signed by the signer learned online",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {
+        "signers": {
+          "example.eth": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        }
+      },
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "name": {
+              "name": "example.eth",
+              "root": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+              "status": "verified"
+            },
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "name-record-rejections",
+      "why": "invalid records are not relayed; a stale seq is normal on a mesh and not blamed",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {
+        "signers": {
+          "example.eth": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "records": [
+          "{\"record\":{\"v\":1,\"name\":\"example.eth\",\"cid\":\"bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy\",\"origCid\":\"QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe\",\"seq\":12,\"ts\":1762470000,\"signer\":\"0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df\"},\"sig\":\"0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b\"}"
+        ]
+      },
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31332c227473223a313736323437303030302c227369676e6572223a22307864356166363466646462343730396665616364326230656362383865396466663161353136653162227d2c22736967223a22307835326633356365353836303161386562356466363130363033356431363637613461383530353934386561656261383663353739636130363362373932326564323830616566303163383530626666653632363431636338303966643261393334363536366638306430326330623965373034646338333639336264343531363162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:not-authorized",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31332c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:signer-mismatch",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31312c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307865323934383138373939616237613037346566353338626137383835346534666434306366656234363865623735343435376661623866653333623932633937336235373631383931613435626564306363353064343336613661623837336166303934303165356265356138666530666337323837663335643763656533393162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:stale-seq",
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c000a7b227265636f7264223a",
+          "expect": {
+            "relay": false,
+            "drop": "record:malformed",
+            "spam": true,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "name-record-future-ts",
+      "why": "ts more than 300 s ahead of the receiver clock",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762469699,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:future-ts",
+            "spam": true,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "name-record-bucket",
+      "why": "per-name bucket (4 at once) stops a flood of bad records for one name before signature checks",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {},
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a32302c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:bad-signature",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a32312c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:bad-signature",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a32322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:bad-signature",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a32332c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313162227d",
+          "expect": {
+            "relay": false,
+            "drop": "record:bad-signature",
+            "spam": true,
+            "send": []
+          }
+        },
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 7,
+          "authenticated": true,
+          "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a32342c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313162227d",
+          "expect": {
+            "relay": false,
+            "drop": "rate-limited",
+            "spam": false,
+            "send": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "want-name-answered",
+      "why": "a node holding the record re-broadcasts the exact signed text, at most once per 5 s per name",
+      "config": {
+        "seeding": true,
+        "bulkCapable": true,
+        "announceIntervalMs": 60000,
+        "nameRebroadcastMs": 5000,
+        "want": {
+          "burst": 8,
+          "refillMs": 2000
+        },
+        "nameRecord": {
+          "burst": 4,
+          "refillMs": 5000
+        },
+        "seenReqMs": 300000,
+        "heardMs": 180000
+      },
+      "setup": {
+        "records": [
+          "{\"record\":{\"v\":1,\"name\":\"example.eth\",\"cid\":\"bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy\",\"origCid\":\"QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe\",\"seq\":12,\"ts\":1762470000,\"signer\":\"0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df\"},\"sig\":\"0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b\"}"
+        ]
+      },
+      "nowSec": 1762470060,
+      "steps": [
+        {
+          "at": 0,
+          "sender": "b1b1b1b1b1b1b1b1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "010301000800000000000000320400010503000b6578616d706c652e657468",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": [
+              {
+                "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+                "ttl": 7
+              }
+            ]
+          }
+        },
+        {
+          "at": 1000,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "010301000800000000000000330400010503000b6578616d706c652e657468",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": []
+          }
+        },
+        {
+          "at": 5000,
+          "sender": "c1c1c1c1c1c1c1c1",
+          "ttl": 5,
+          "authenticated": true,
+          "payloadHex": "010301000800000000000000340400010503000b6578616d706c652e657468",
+          "expect": {
+            "relay": true,
+            "spam": false,
+            "send": [
+              {
+                "payloadHex": "01020c01827b227265636f7264223a7b2276223a312c226e616d65223a226578616d706c652e657468222c22636964223a2262616679626569623567673435657236793772676f32686769737837626a34697373656b766679687535326b33656d353261326262326b68767879222c226f726967436964223a22516d51767355573553425138336d7565564b63514b3771384d4532366f704a5147576168395a6255674a54445365222c22736571223a31322c227473223a313736323437303030302c227369676e6572223a22307836656132313437663638373464323861616133383231623463363863363466663764623063386466227d2c22736967223a22307864643066303739376138623264626130353961626363343464653332303535313833623836666362646137643234373137633661376337613739643463356237353339313532306534656634633839383065626535613336313934613730613030393662346534653333306261326136633739656437653138343766623962623162227d",
+                "ttl": 7
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

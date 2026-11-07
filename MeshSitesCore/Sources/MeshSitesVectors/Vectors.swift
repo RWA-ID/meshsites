@@ -149,6 +149,64 @@ public enum VectorRunner {
             }
         }
 
+        // ---- gossip.json (M3 gossip policy)
+        if let g = json("gossip.json"), let selfID = g["self"]?.string {
+            for sc in g["scenarios"]?.array ?? [] {
+                guard let id = sc["id"]?.string, let nowSec = sc["nowSec"]?.int, let cfgJ = sc["config"] else { check("gossip scenario", false, "malformed"); continue }
+                var cfg = Gossip.Config()
+                cfg.seeding = cfgJ["seeding"] == .bool(true)
+                cfg.bulkCapable = cfgJ["bulkCapable"] == .bool(true)
+                func num(_ j: JSON?) -> Double? {
+                    switch j { case .int(let i)?: return Double(i); case .double(let d)?: return d; default: return nil }
+                }
+                cfg.announceIntervalMs = num(cfgJ["announceIntervalMs"]) ?? cfg.announceIntervalMs
+                cfg.nameRebroadcastMs = num(cfgJ["nameRebroadcastMs"]) ?? cfg.nameRebroadcastMs
+                cfg.seenReqMs = num(cfgJ["seenReqMs"]) ?? cfg.seenReqMs
+                cfg.heardMs = num(cfgJ["heardMs"]) ?? cfg.heardMs
+                if let b = cfgJ["want"], let burst = num(b["burst"]), let r = num(b["refillMs"]) { cfg.want = .init(burst: burst, refillMs: r) }
+                if let b = cfgJ["nameRecord"], let burst = num(b["burst"]), let r = num(b["refillMs"]) { cfg.nameRecord = .init(burst: burst, refillMs: r) }
+
+                let node = Gossip(selfID: selfID, config: cfg)
+                let setup = sc["setup"]
+                for s in setup?["sites"]?.array ?? [] {
+                    guard let r = s["root"]?.string, let root = try? CID.parse(r), let size = s["sizeBytes"]?.int, let count = s["blockCount"]?.int else { continue }
+                    node.setSite(.init(root: root, sizeBytes: UInt32(size), blockCount: UInt16(count), complete: true))
+                }
+                for (n, a) in setup?["signers"]?.object ?? [:] { if let a = a.string { node.trust(name: n, signer: a) } }
+                for r in setup?["records"]?.array ?? [] {
+                    if let t = r.string { do { try node.addRecord(t, nowSec: nowSec) } catch { check("gossip \(id) setup record", false, "\(error)") } }
+                }
+
+                var failures: [String] = []
+                for (i, st) in (sc["steps"]?.array ?? []).enumerated() {
+                    guard let sender = st["sender"]?.string, let ttl = st["ttl"]?.int, let hex = st["payloadHex"]?.string, let payload = Hex.decode(hex),
+                          let at = num(st["at"]), let e = st["expect"] else { failures.append("step \(i): malformed"); continue }
+                    let v = node.receive(.init(sender: sender, recipient: st["recipient"]?.string, ttl: UInt8(ttl), payload: payload,
+                                               authenticated: st["authenticated"] == .bool(true)), now: at, nowSec: nowSec)
+                    var why: [String] = []
+                    if v.relay != (e["relay"] == .bool(true)) { why.append("relay \(v.relay)") }
+                    if v.drop != e["drop"]?.string { why.append("drop \(v.drop ?? "nil") (want \(e["drop"]?.string ?? "nil"))") }
+                    if v.spam != (e["spam"] == .bool(true)) { why.append("spam \(v.spam)") }
+                    let wantHave = e["have"]
+                    if (v.have == nil) != (wantHave == nil) || (v.have.map { $0.from != wantHave?["from"]?.string || Hex.encode($0.reqId) != wantHave?["reqIdHex"]?.string } ?? false) {
+                        why.append("have \(String(describing: v.have))")
+                    }
+                    let wantName = e["name"]
+                    if v.name?.name != wantName?["name"]?.string || v.name?.status.rawValue != wantName?["status"]?.string || v.name?.root != wantName?["root"]?.string {
+                        why.append("name \(String(describing: v.name))")
+                    }
+                    let wantSend = e["send"]?.array ?? []
+                    let gotSend = v.send.map { o -> String in
+                        "\((try? Wire.encode(o.message)).map(Hex.encode) ?? "encode-error")/\(o.ttl)/\(o.recipient ?? "")"
+                    }
+                    let expSend = wantSend.map { "\($0["payloadHex"]?.string ?? "")/\($0["ttl"]?.int ?? -1)/\($0["recipient"]?.string ?? "")" }
+                    if gotSend != expSend { why.append("send \(gotSend) (want \(expSend))") }
+                    if !why.isEmpty { failures.append("step \(i): " + why.joined(separator: ", ")) }
+                }
+                check("gossip \(id)", failures.isEmpty, failures.joined(separator: "; "))
+            }
+        }
+
         // ---- the real meshsites.eth record (release/), as set on-chain
         let release = vectorsDir.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("release")
         if let b = try? Data(contentsOf: release.appendingPathComponent("meshsites.record.signed.json")), let signed = try? JSON.parse(Array(b)) {
