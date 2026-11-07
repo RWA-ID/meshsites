@@ -61,7 +61,7 @@ struct GlobeView: View {
                     detail: state.frameDetail,
                     colors: colors,
                     world: world,
-                    pixel: 1 / max(displayScale, 1),
+                    pixel: 1 / max(Double(displayScale), 1),
                     fontDesign: theme.bodyFontDesign
                 )
                 Canvas(rendersAsynchronously: false) { context, size in
