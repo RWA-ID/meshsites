@@ -5,6 +5,7 @@
  *
  *   npm run vectors
  */
+import { readSiteDir } from '../src/node.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +24,6 @@ import {
   kuboDefaultCid,
   LIMITS,
   type NameRecord,
-  readSiteDir,
   recordMessage,
   signRecord,
   type SignedNameRecord,

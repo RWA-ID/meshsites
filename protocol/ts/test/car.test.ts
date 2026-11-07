@@ -1,3 +1,4 @@
+import { readSiteDir } from '../src/node.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -9,7 +10,7 @@ import { CarBlockIterator } from '@ipld/car/iterator';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildSiteCar, checkBlock, readSiteDir, verifyCar, writeCar, LIMITS } from '../src/index.ts';
+import { buildSiteCar, checkBlock, verifyCar, writeCar, LIMITS } from '../src/index.ts';
 
 const site = (n: number) => [
   { path: 'index.html', content: utf8ToBytes('<h1>hi</h1>') },

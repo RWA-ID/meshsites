@@ -10,6 +10,7 @@
  * Private keys are only read from an environment variable named by --key-env,
  * never from argv (argv lands in shell history and `ps`).
  */
+import { readSiteDir } from '@meshsites/protocol/node';
 import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { basename } from 'node:path';
@@ -22,7 +23,6 @@ import {
   LIMITS,
   type NameRecord,
   parsePrivateKey,
-  readSiteDir,
   recordMessage,
   signRecord,
   type SignedNameRecord,

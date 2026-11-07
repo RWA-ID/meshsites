@@ -2,6 +2,7 @@
  * The committed vectors are the contract with MeshSitesCore (Swift). These
  * tests fail if the TS implementation drifts from them.
  */
+import { readSiteDir } from '../src/node.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -17,7 +18,6 @@ import {
   CanonicalJsonError,
   eip191Hash,
   kuboDefaultCid,
-  readSiteDir,
   recordMessage,
   signRecord,
   verifyCar,
