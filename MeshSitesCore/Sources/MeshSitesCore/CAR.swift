@@ -100,4 +100,34 @@ public struct CARFile {
         }
         return CARFile(version: ver, roots: rs, blocks: blocks)
     }
+
+    /// CARv1 with one root, blocks in the given order (M4: storing a site
+    /// fetched over the mesh). Same bytes as @ipld/car's writer: the header is
+    /// dag-cbor {"roots": [CID], "version": 1} with keys in canonical order.
+    public static func write(root: CID, blocks: [(cid: CID, bytes: Bytes)]) -> Bytes {
+        func head(_ major: UInt8, _ n: Int) -> Bytes {
+            switch n {
+            case 0..<24: return [major << 5 | UInt8(n)]
+            case 24..<256: return [major << 5 | 24, UInt8(n)]
+            default: return [major << 5 | 25, UInt8(n >> 8), UInt8(n & 0xff)]
+            }
+        }
+        let cidBytes: Bytes = [0] + root.bytes // CBOR tag 42 carries a 0x00 multibase prefix
+        var header: Bytes = head(5, 2)
+        header.append(contentsOf: head(3, 5))
+        header.append(contentsOf: Array("roots".utf8))
+        header.append(contentsOf: head(4, 1))
+        header.append(contentsOf: [0xd8, 42])
+        header.append(contentsOf: head(2, cidBytes.count))
+        header.append(contentsOf: cidBytes)
+        header.append(contentsOf: head(3, 7))
+        header.append(contentsOf: Array("version".utf8))
+        header.append(0x01)
+        var out = Varint.encode(UInt64(header.count)) + header
+        for b in blocks {
+            let c = b.cid.bytes
+            out += Varint.encode(UInt64(c.count + b.bytes.count)) + c + b.bytes
+        }
+        return out
+    }
 }

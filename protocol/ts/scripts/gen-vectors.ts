@@ -37,6 +37,14 @@ import {
   DEFAULT_GOSSIP_CONFIG,
   type GossipConfig,
   GossipPolicy,
+  type DirectVerdict,
+  type FetchAction,
+  Fetcher,
+  type Holder,
+  readCar,
+  Server,
+  type ServerConfig,
+  type Via,
 } from '../src/index.ts';
 
 const VEC = join(dirname(fileURLToPath(import.meta.url)), '../../vectors');
@@ -539,6 +547,211 @@ function gossipVectors(rootCid: string, origCid: string) {
   };
 }
 
+// ---------------- fetch.json (M4) ----------------
+
+type Resp = 'ok' | 'corrupt' | 'none' | 'silent';
+
+interface FetchScenarioIn {
+  id: string;
+  why: string;
+  holders: Holder[];
+  /** CIDs (strings) already stored locally before the fetch. */
+  local?: string[];
+  /** How each peer answers a BLOCK_REQ: one mode, or per call index. */
+  respond: Record<string, Resp | Resp[]>;
+  /** Extra events injected after `start` (unsolicited blocks etc.). */
+  inject?: { peer: string; cid: 'first-requested' | 'not-requested'; resp: 'ok' }[];
+  blockSet?: 'site-basic' | 'dedupe-bomb';
+  /** Hand-written expectations. */
+  expect: { outcome: 'done' | 'failed'; reason?: string; blamed?: string[]; askedPeers: string[] };
+}
+
+const corrupt = (b: Uint8Array) => {
+  const c = b.slice();
+  c[c.length >> 1] ^= 0xff;
+  return c;
+};
+
+async function fetchVectors(siteCarPath: string, bombCarPath: string) {
+  const { readFile } = await import('node:fs/promises');
+  const sets: Record<string, { root: CID; blocks: Map<string, Uint8Array> }> = {};
+  for (const [name, path] of [['site-basic', siteCarPath], ['dedupe-bomb', bombCarPath]] as const) {
+    const r = await readCar(new Uint8Array(await readFile(join(VEC, path))));
+    sets[name] = { root: r.root, blocks: new Map([...r.blocks].map(([k, v]) => [k, v.bytes])) };
+  }
+  const B = 'b1b1b1b1b1b1b1b1', C = 'c1c1c1c1c1c1c1c1', D = 'd1d1d1d1d1d1d1d1', E = 'e1e1e1e1e1e1e1e1';
+  const h = (peer: string, via: Via, hops: number, sizeBytes = 41002, blockCount = 9): Holder => ({ peer, via, hops, sizeBytes, blockCount });
+  const siteLeaves = (() => {
+    const s = sets['site-basic'];
+    return [...s.blocks.keys()].filter((k) => CID.parse(k).code === 0x55).slice(0, 2);
+  })();
+
+  const scenarios: FetchScenarioIn[] = [
+    { id: 'one-holder', why: 'a single honest BLE holder serves the whole site, batch by batch from the DAG frontier', holders: [h(B, 'ble', 1)], respond: { [B]: 'ok' }, expect: { outcome: 'done', askedPeers: [B] } },
+    { id: 'corrupt-then-next', why: 'a block that fails its hash check blames the peer and the same CIDs are re-requested from the next holder', holders: [h(B, 'ble', 1), h(C, 'ble', 2)], respond: { [B]: 'corrupt', [C]: 'ok' }, expect: { outcome: 'done', blamed: [B], askedPeers: [B, C] } },
+    { id: 'corrupt-later-batch', why: 'B serves the first batch, then corrupts: blocks already verified are kept and only the rest come from C', holders: [h(B, 'ble', 1), h(C, 'ble', 1)], respond: { [B]: ['ok', 'corrupt'], [C]: 'ok' }, expect: { outcome: 'done', blamed: [B], askedPeers: [B, C] } },
+    { id: 'block-none-then-next', why: 'BLOCK_NONE moves on without blame', holders: [h(B, 'ble', 1), h(C, 'ble', 1)], respond: { [B]: 'none', [C]: 'ok' }, expect: { outcome: 'done', askedPeers: [B, C] } },
+    { id: 'timeout-then-next', why: 'no answer by the batch deadline moves on without blame; a tick before the deadline does nothing', holders: [h(B, 'ble', 1), h(C, 'ble', 2)], respond: { [B]: 'silent', [C]: 'ok' }, expect: { outcome: 'done', askedPeers: [B, C] } },
+    { id: 'all-holders-fail', why: 'when every holder failed the fetch fails (the caller may WANT again)', holders: [h(B, 'ble', 1)], respond: { [B]: 'corrupt' }, expect: { outcome: 'failed', reason: 'no-holder', blamed: [B], askedPeers: [B] } },
+    {
+      id: 'ignores-unsolicited',
+      why: 'a block from a peer we did not ask, or for a CID we did not request, changes nothing',
+      holders: [h(B, 'ble', 1)],
+      respond: { [B]: 'ok' },
+      inject: [{ peer: C, cid: 'first-requested', resp: 'ok' }, { peer: B, cid: 'not-requested', resp: 'ok' }],
+      expect: { outcome: 'done', askedPeers: [B] },
+    },
+    {
+      id: 'ranking',
+      why: 'adjacent bulk first, then fewest hops; duplicates and holders announcing more than 1 MiB are dropped',
+      holders: [h(B, 'ble', 3), h(E, 'ble', 1, 2_000_000), h(C, 'bulk', 1), h(D, 'ble', 1), h(B, 'bulk', 1)],
+      respond: { [C]: 'none', [B]: 'none', [D]: 'ok' },
+      expect: { outcome: 'done', askedPeers: [C, B, D] },
+    },
+    { id: 'local-blocks-skipped', why: 'blocks already stored (e.g. shared with another site) are never requested', holders: [h(B, 'ble', 1)], local: siteLeaves, respond: { [B]: 'ok' }, expect: { outcome: 'done', askedPeers: [B] } },
+    { id: 'invalid-dag', why: 'every block is genuine but the site expands past 4 MiB (dedupe bomb): fail, nobody blamed', holders: [h(B, 'ble', 1, 27000, 4)], respond: { [B]: 'ok' }, blockSet: 'dedupe-bomb', expect: { outcome: 'failed', reason: 'invalid-dag', askedPeers: [B] } },
+  ];
+
+  const enc = (a: FetchAction) => {
+    switch (a.a) {
+      case 'request': return { a: a.a, peer: a.peer, via: a.via, cids: a.cids.map(String), deadline: a.deadline };
+      case 'stored': return { a: a.a, cid: a.cid.toString() };
+      case 'blame': return { a: a.a, peer: a.peer, reason: a.reason };
+      case 'next': return { a: a.a, from: a.from, reason: a.reason };
+      case 'done': return { a: a.a, totalBytes: a.totalBytes, blockCount: a.blockCount };
+      case 'failed': return { a: a.a, reason: a.reason };
+    }
+  };
+
+  const out = scenarios.map((sc) => {
+    const set = sets[sc.blockSet ?? 'site-basic'];
+    const local = new Map((sc.local ?? []).map((k) => [k, set.blocks.get(k)!]));
+    const f = new Fetcher(set.root, sc.holders, { get: (c) => local.get(c.toString()) });
+    type Ev = { ev: 'start'; at: number } | { ev: 'block'; at: number; peer: string; cid: string; bytes: 'ok' | 'corrupt' } | { ev: 'none'; at: number; peer: string; cid: string } | { ev: 'tick'; at: number };
+    const steps: { event: Ev; actions: ReturnType<typeof enc>[] }[] = [];
+    const calls = new Map<string, number>();
+    let now = 1000;
+    const queue: Ev[] = [{ ev: 'start', at: now }];
+    let injected = false;
+    while (queue.length && steps.length < 500) {
+      const ev = queue.shift()!;
+      now = ev.at;
+      let acts: FetchAction[];
+      if (ev.ev === 'start') acts = f.start(now);
+      else if (ev.ev === 'tick') acts = f.tick(now);
+      else if (ev.ev === 'none') acts = f.onBlockNone(ev.peer, CID.parse(ev.cid), now);
+      else {
+        const b = set.blocks.get(ev.cid) ?? new Uint8Array([1, 2, 3]);
+        acts = f.onBlock(ev.peer, CID.parse(ev.cid), ev.bytes === 'ok' ? b : corrupt(b), now);
+      }
+      steps.push({ event: ev, actions: acts.map(enc) });
+      for (const a of acts) {
+        if (a.a !== 'request') continue;
+        if (!injected && sc.inject) {
+          injected = true;
+          for (const inj of sc.inject) {
+            const cid = inj.cid === 'first-requested' ? a.cids[0].toString() : [...set.blocks.keys()].find((k) => !a.cids.some((c) => c.toString() === k))!;
+            queue.push({ ev: 'block', at: now + 5, peer: inj.peer, cid, bytes: 'ok' });
+          }
+        }
+        const n = calls.get(a.peer) ?? 0;
+        calls.set(a.peer, n + 1);
+        const r = sc.respond[a.peer];
+        const mode = Array.isArray(r) ? (r[n] ?? r[r.length - 1]) : r;
+        if (mode === 'silent') {
+          queue.push({ ev: 'tick', at: a.deadline - 1 }, { ev: 'tick', at: a.deadline });
+          continue;
+        }
+        a.cids.forEach((c, i) => {
+          const at = now + 10 + i;
+          if (mode === 'none') queue.push({ ev: 'none', at, peer: a.peer, cid: c.toString() });
+          else queue.push({ ev: 'block', at, peer: a.peer, cid: c.toString(), bytes: mode === 'corrupt' && i === 0 ? 'corrupt' : 'ok' });
+        });
+      }
+      queue.sort((x, y) => x.at - y.at);
+    }
+
+    // Check the hand-written expectations against what the policy did.
+    const all = steps.flatMap((s) => s.actions);
+    const fail = (what: string) => {
+      throw new Error(`fetch ${sc.id}: ${what}; actions ${JSON.stringify(all.filter((a) => a.a !== 'stored'))}`);
+    };
+    const end = all.find((a) => a.a === 'done' || a.a === 'failed');
+    if (end?.a !== sc.expect.outcome) fail('outcome');
+    if (end?.a === 'failed' && end.reason !== sc.expect.reason) fail('reason');
+    const blamed = all.filter((a) => a.a === 'blame').map((a) => (a as { peer: string }).peer);
+    if (JSON.stringify(blamed) !== JSON.stringify(sc.expect.blamed ?? [])) fail('blamed');
+    const asked = [...new Set(all.filter((a) => a.a === 'request').map((a) => (a as { peer: string }).peer))];
+    if (JSON.stringify(asked) !== JSON.stringify(sc.expect.askedPeers)) fail('askedPeers');
+    if (sc.local) for (const k of sc.local) if (all.some((a) => a.a === 'request' && (a as { cids: string[] }).cids.includes(k))) fail('requested a local block');
+    if (sc.inject) {
+      const stored = all.filter((a) => a.a === 'stored').length;
+      if (stored !== set.blocks.size) fail(`stored ${stored} blocks, expected each once`);
+    }
+
+    return { id: sc.id, why: sc.why, blockSet: sc.blockSet ?? 'site-basic', holders: sc.holders, local: sc.local ?? [], steps };
+  });
+
+  // ---- server
+  const server = (cfg: Partial<ServerConfig> = {}) => new Server(cfg);
+  const site = sets['site-basic'];
+  const lookup = (root: CID, cid: CID) => (root.equals(site.root) ? site.blocks.get(cid.toString()) : undefined);
+  // A raw CID that is guaranteed not to be in any block set.
+  const leaf = CID.create(1, raw.code, await sha256.digest(utf8ToBytes('meshsites: not in any site')));
+  for (const s of Object.values(sets)) if (s.blocks.has(leaf.toString())) throw new Error('absent CID is present');
+  const known = [...site.blocks.keys()].slice(0, 2).map((k) => CID.parse(k));
+  const req = (root: CID, cids: CID[]) => bytesToHex(encodeMessage({ t: 'block-req', root, cids }));
+  const serverCases: { id: string; why: string; config?: Partial<ServerConfig>; steps: { at: number; peer: string; payloadHex: string; expect: Record<string, unknown> }[] }[] = [];
+  const addServer = (id: string, why: string, config: Partial<ServerConfig> | undefined, reqs: { at: number; peer: string; payloadHex: string; check: (v: DirectVerdict) => boolean }[]) => {
+    const s = server(config);
+    serverCases.push({
+      id,
+      why,
+      ...(config ? { config } : {}),
+      steps: reqs.map((r, i) => {
+        const v = s.handle(r.peer, hexToBytes(r.payloadHex), r.at, lookup);
+        if (!r.check(v)) throw new Error(`server ${id} step ${i}: ${v.kind === 'reply' ? `reply ${v.messages.map((m) => m.t).join(',')}` : JSON.stringify({ ...v, bytes: undefined })}`);
+        const expect =
+          v.kind === 'reply' ? { kind: v.kind, messagesHex: v.messages.map((m) => bytesToHex(encodeMessage(m))) }
+          : v.kind === 'block' ? { kind: v.kind, cid: v.cid.toString(), bytesHex: bytesToHex(v.bytes) }
+          : v.kind === 'block-none' ? { kind: v.kind, cid: v.cid.toString() }
+          : { kind: v.kind, reason: v.reason, spam: v.spam };
+        return { at: r.at, peer: r.peer, payloadHex: r.payloadHex, expect };
+      }),
+    });
+  };
+  addServer('serves-from-the-site', 'known CIDs come back as BLOCK, unknown as BLOCK_NONE, in request order', undefined, [
+    { at: 0, peer: B, payloadHex: req(site.root, [...known, leaf]), check: (v) => v.kind === 'reply' && v.messages.length === 3 && v.messages[2].t === 'block-none' && v.messages[0].t === 'block' },
+  ]);
+  addServer('scoped-to-root', 'a request under a root we do not hold gets BLOCK_NONE even for blocks we have', undefined, [
+    { at: 0, peer: B, payloadHex: req(leaf, known), check: (v) => v.kind === 'reply' && v.messages.every((m) => m.t === 'block-none') },
+  ]);
+  addServer('not-seeding', 'a node with sharing off answers nothing and blames nobody', { seeding: false }, [
+    { at: 0, peer: B, payloadHex: req(site.root, known), check: (v) => v.kind === 'drop' && v.reason === 'not-seeding' && !v.spam },
+  ]);
+  addServer('request-rate-limit', 'per-peer bucket: 8 BLOCK_REQs at once, then one per 500 ms', undefined, [
+    ...Array.from({ length: 8 }, () => ({ at: 0, peer: B, payloadHex: req(site.root, known), check: (v: DirectVerdict) => v.kind === 'reply' })),
+    { at: 0, peer: B, payloadHex: req(site.root, known), check: (v) => v.kind === 'drop' && v.reason === 'rate-limited' && v.spam },
+    { at: 0, peer: C, payloadHex: req(site.root, known), check: (v) => v.kind === 'reply' },
+    { at: 500, peer: B, payloadHex: req(site.root, known), check: (v) => v.kind === 'reply' },
+  ]);
+  addServer('direct-rules', 'BLOCK / BLOCK_NONE are handed to the fetcher; public gossip or garbage inside a session is blamed', undefined, [
+    { at: 0, peer: B, payloadHex: bytesToHex(encodeMessage({ t: 'block', cid: leaf, bytes: utf8ToBytes('x') })), check: (v) => v.kind === 'block' },
+    { at: 0, peer: B, payloadHex: bytesToHex(encodeMessage({ t: 'block-none', cid: leaf })), check: (v) => v.kind === 'block-none' },
+    { at: 0, peer: B, payloadHex: bytesToHex(encodeMessage({ t: 'announce', sites: [{ root: site.root, sizeBytes: 1, blockCount: 1 }] })), check: (v) => v.kind === 'drop' && v.reason === 'not-direct' && v.spam },
+    { at: 0, peer: B, payloadHex: '0111', check: (v) => v.kind === 'drop' && v.reason === 'malformed' && v.spam },
+    { at: 0, peer: B, payloadHex: '0177', check: (v) => v.kind === 'drop' && v.reason === 'unknown' && !v.spam },
+  ]);
+
+  return {
+    description:
+      'M4 block transfer. `fetch`: a Fetcher for the given block set root, holders and locally stored CIDs is fed `steps[].event` in order (`at` = clock ms; block bytes are the real block, or "corrupt" = that block with byte [len>>1] XOR 0xff); it must emit exactly `steps[].actions`. `server`: a Server (DEFAULT config unless `config`) must answer each step exactly; lookup serves only the site-basic blocks under the site-basic root.',
+    blockSets: Object.fromEntries(Object.entries(sets).map(([k, v]) => [k, { root: v.root.toString(), blocks: Object.fromEntries([...v.blocks].map(([c, b]) => [c, bytesToHex(b)])) }])),
+    fetch: out,
+    server: serverCases,
+  };
+}
+
 await mkdir(VEC, { recursive: true });
 const car = await siteVectors();
 await writeFile(join(VEC, 'car.json'), json(car));
@@ -546,4 +759,5 @@ await writeFile(join(VEC, 'records.json'), json(recordVectors(car.rootCid, car.o
 await writeFile(join(VEC, 'canonical-json.json'), json(canonicalVectors()));
 await writeFile(join(VEC, 'wire.json'), json(wireVectors(car.rootCid)));
 await writeFile(join(VEC, 'gossip.json'), json(gossipVectors(car.rootCid, car.origCidHint)));
+await writeFile(join(VEC, 'fetch.json'), json(await fetchVectors('site-basic.car', 'dedupe-bomb.car')));
 console.log(`vectors written to ${VEC}`);

@@ -2123,24 +2123,28 @@ final class BLEService: NSObject {
         let directPeripheralState = snapshotDirectPeripheralState(for: recipientPeerID)
         let recipientCentral = snapshotSubscribedCentrals().central(for: recipientPeerID)
 
-        if let peripheralMaxLen = directPeripheralState?.peripheral.maximumWriteValueLength(for: .withoutResponse),
-           data.count > peripheralMaxLen {
-            let chunk = BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: peripheralMaxLen)
-            sendFragmentedPacket(packet, pad: pad, maxChunk: chunk, directedOnlyPeer: recipientPeerID)
-            return
-        }
-        if let centralMaxLen = recipientCentral?.maximumUpdateValueLength,
-           data.count > centralMaxLen {
-            let chunk = BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: centralMaxLen)
+        // MeshSites fork patch 8: patch 8 may move any fragment to the notify link, so
+        // fragments must fit BOTH links (the two connections can negotiate different limits).
+        let peripheralMaxLen = directPeripheralState?.peripheral.maximumWriteValueLength(for: .withoutResponse)
+        let centralMaxLen = recipientCentral?.maximumUpdateValueLength
+        if let linkLimit = [peripheralMaxLen, centralMaxLen].compactMap({ $0 }).min(),
+           data.count > linkLimit {
+            // Headroom for the source route broadcastPacket adds to each fragment (count byte +
+            // 8 B per hop): bitchat's 42 B overhead omits it, so routed fragments came out
+            // 1 B over the link limit (measured 513 B on a 512 link) and stalled the write link.
+            let chunk = BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: linkLimit - Self.meshSitesRouteHeadroom)
             sendFragmentedPacket(packet, pad: pad, maxChunk: chunk, directedOnlyPeer: recipientPeerID)
             return
         }
 
-        // Direct write via peripheral link
+        // Direct write via peripheral link (MeshSites fork patch 8: not when that
+        // write link is backed up and the peer can be notified instead)
         if let state = directPeripheralState,
            state.isConnected,
-           let characteristic = state.characteristic {
-            writeOrEnqueue(data, to: state.peripheral, characteristic: characteristic, priority: outboundPriority)
+           let characteristic = state.characteristic,
+           !(recipientCentral != nil && meshSitesWriteLinkBackedUp(state.peripheral)) {
+            writeOrEnqueue(data, to: state.peripheral, characteristic: characteristic, priority: outboundPriority,
+                           notifyFallback: recipientCentral) // MeshSites fork patch 8
             sentEncrypted = true
         }
 
@@ -2311,8 +2315,37 @@ final class BLEService: NSObject {
             requireDirectPeerLink: requireDirectPeerLink || requireNoiseAuthenticatedPeerLink
         )
 
-        if let chunk = plan.fragmentChunkSize {
-            guard !plan.selectedLinks.peripheralIDs.isEmpty || !plan.selectedLinks.centralIDs.isEmpty else {
+        // MeshSites fork patch 8 (docs/decisions.md D13): a directed packet whose only
+        // chosen link is a backed-up write link goes out on the peer's notify link
+        // instead. Measured: a central's write-without-response to an idle peer can
+        // stall for 5-15 s (the radio drains only when that peer transmits), while
+        // the peer's own central link to us is free.
+        var selectedLinks = plan.selectedLinks
+        let directedNotifyFallback = plan.directedPeerHint.flatMap { peer in
+            subscribedCentrals.first { centralSnapshot.peerIDsByCentralUUID[$0.identifier.uuidString] == peer }
+        }
+        // Fragments of a directed packet are a burst: measured, a burst of
+        // write-without-response on some connections is accepted by iOS and then
+        // silently lost, while notify bursts always arrived. So bursts use the
+        // notify link whenever the peer is subscribed; single packets switch only
+        // when the write link is backed up.
+        if let peer = plan.directedPeerHint,
+           !requireDirectPeerLink, !requireNoiseAuthenticatedPeerLink,
+           selectedLinks.centralIDs.isEmpty, !selectedLinks.peripheralIDs.isEmpty,
+           let central = subscribedCentrals.first(where: { centralSnapshot.peerIDsByCentralUUID[$0.identifier.uuidString] == peer }),
+           data.count <= central.maximumUpdateValueLength, // a notify longer than this is cut short
+           packet.type == MessageType.fragment.rawValue
+               || connectedStates.filter({ selectedLinks.peripheralIDs.contains($0.peripheral.identifier.uuidString) })
+                   .allSatisfy({ meshSitesWriteLinkBackedUp($0.peripheral) }) {
+            selectedLinks = BLEFanoutSelection(peripheralIDs: [], centralIDs: [central.identifier.uuidString])
+        }
+
+        if var chunk = plan.fragmentChunkSize {
+            // MeshSites fork patch 8: fragments may be moved to the notify link; size them to fit it too.
+            if let fallback = directedNotifyFallback {
+                chunk = min(chunk, BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: fallback.maximumUpdateValueLength - Self.meshSitesRouteHeadroom))
+            }
+            guard !selectedLinks.peripheralIDs.isEmpty || !selectedLinks.centralIDs.isEmpty else {
                 return false
             }
             return sendFragmentedPacket(
@@ -2336,7 +2369,7 @@ final class BLEService: NSObject {
         // Writes to selected connected peripherals
         for s in connectedStates {
             let pid = s.peripheral.identifier.uuidString
-            guard plan.selectedLinks.peripheralIDs.contains(pid) else { continue }
+            guard selectedLinks.peripheralIDs.contains(pid) else { continue }
             if let ch = s.characteristic {
                 if requireDirectPeerLink || requireNoiseAuthenticatedPeerLink {
                     acceptedByPhysicalLink = writeOrEnqueueIfAccepted(
@@ -2347,13 +2380,14 @@ final class BLEService: NSObject {
                         requiredAuthenticatedPeer: requireNoiseAuthenticatedPeerLink ? directedOnlyPeer : nil
                     ) || acceptedByPhysicalLink
                 } else {
-                    writeOrEnqueue(data, to: s.peripheral, characteristic: ch, priority: outboundPriority)
+                    writeOrEnqueue(data, to: s.peripheral, characteristic: ch, priority: outboundPriority,
+                                   notifyFallback: directedNotifyFallback) // MeshSites fork patch 8
                 }
             }
         }
         // Notify selected subscribed centrals
         if let ch = characteristic {
-            let targets = subscribedCentrals.filter { plan.selectedLinks.centralIDs.contains($0.identifier.uuidString) }
+            let targets = subscribedCentrals.filter { selectedLinks.centralIDs.contains($0.identifier.uuidString) }
             if !targets.isEmpty {
                 if requireDirectPeerLink || requireNoiseAuthenticatedPeerLink {
                     acceptedByPhysicalLink = notifyOrEnqueueIfAccepted(
@@ -2375,7 +2409,7 @@ final class BLEService: NSObject {
             }
         }
         if requireDirectPeerLink || requireNoiseAuthenticatedPeerLink { return acceptedByPhysicalLink }
-        return !plan.selectedLinks.peripheralIDs.isEmpty || !plan.selectedLinks.centralIDs.isEmpty
+        return !selectedLinks.peripheralIDs.isEmpty || !selectedLinks.centralIDs.isEmpty
     }
 
     // Directed send helper (unicast to a specific peerID) without altering packet contents
@@ -5065,13 +5099,23 @@ extension BLEService {
     
     // MARK: Helpers: IDs, selection, and write backpressure
     
-    private func writeOrEnqueue(_ data: Data, to peripheral: CBPeripheral, characteristic: CBCharacteristic, priority: BLEOutboundWritePriority) {
+    private func writeOrEnqueue(_ data: Data, to peripheral: CBPeripheral, characteristic: CBCharacteristic, priority: BLEOutboundWritePriority,
+                                notifyFallback: CBCentral? = nil) {
         // BLE operations run on bleQueue; keep queue affinity
         bleQueue.async { [weak self] in
             guard let self = self else { return }
             let uuid = peripheral.identifier.uuidString
             if peripheral.canSendWriteWithoutResponse {
                 peripheral.writeValue(data, for: characteristic, type: .withoutResponse)
+            } else if let central = notifyFallback, let notifyCharacteristic = self.characteristic,
+                      data.count <= central.maximumUpdateValueLength { // a notify longer than this is cut short
+                // MeshSites fork patch 8: the write link is backed up right now, and a
+                // queued write may wait until the peer next transmits. Send this
+                // directed packet on the peer's notify link instead. Decided here, at
+                // write time, so a burst can't race past the check.
+                if self.peripheralManager?.updateValue(data, for: notifyCharacteristic, onSubscribedCentrals: [central]) != true {
+                    self.enqueuePendingNotification(data: data, centrals: [central], context: "write-fallback")
+                }
             } else {
                 let result = self.pendingPeripheralWrites.enqueue(
                     data: data,
@@ -7202,8 +7246,22 @@ extension BLEService {
             selfID: { [weak self] in self?.myPeerIDData ?? Data() },
             send: { [weak self] payload, ttl, recipient, sign in
                 self?.sendMeshSites(payload, ttl: ttl, recipient: recipient, sign: sign)
+            },
+            sendDirect: { [weak self] payload, peer in
+                self?.sendMeshSitesDirect(payload, to: peer)
             }
         ))
+    }
+
+    /// MeshSites fork patch 8: bytes kept free per fragment for a source route (1 + 8 per hop, 1 hop).
+    static let meshSitesRouteHeadroom = 16
+
+    /// Fork patch 8: the write-without-response link to `peripheral` can't take
+    /// more right now (iOS says so, or writes are already queued for it).
+    private func meshSitesWriteLinkBackedUp(_ peripheral: CBPeripheral) -> Bool {
+        let uuid = peripheral.identifier.uuidString
+        let check = { !peripheral.canSendWriteWithoutResponse || self.pendingPeripheralWrites.peripheralIDs.contains(uuid) }
+        return DispatchQueue.getSpecific(key: bleQueueKey) != nil ? check() : bleQueue.sync(execute: check)
     }
 
     /// One public 0x4D packet. Returns false when it must not be relayed.
@@ -7220,6 +7278,14 @@ extension BLEService {
             ttl: packet.ttl,
             authenticated: authenticated
         )
+    }
+
+    /// A direct MeshSites message inside the peer's Noise session (payload type 0x4D).
+    /// bitchat's own path: encrypts, relays deterministically multi-hop, and
+    /// queues behind a handshake when no session exists yet.
+    private func sendMeshSitesDirect(_ payload: Data, to peer: Data) {
+        guard let peerID = PeerID(routingData: peer) else { return }
+        sendNoisePayload(Data([MeshSitesService.noisePayloadType]) + payload, to: peerID)
     }
 
     /// Broadcast (or address, with a source route when known) a public 0x4D packet.

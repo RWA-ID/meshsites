@@ -2,6 +2,7 @@ import BitFoundation
 import BitLogger
 import CryptoKit
 import Foundation
+import MeshSitesKit // MeshSites
 
 struct BLENoiseHandshakeHandlingResult {
     let processed: Bool
@@ -223,6 +224,11 @@ final class BLENoisePacketHandler {
             let payloadData = decrypted.dropFirst()
 
             guard let noisePayloadType = NoisePayloadType.decoded(rawValue: payloadType) else {
+                // MeshSites (fork patch 7, docs/decisions.md D6/D13): block transfer inside the session.
+                if payloadType == MeshSitesService.noisePayloadType, let from = peerID.routingData {
+                    MeshSitesService.shared.receiveDirect(payload: Data(payloadData), from: from)
+                    return
+                }
                 SecureLogger.warning("⚠️ Unknown noise payload type: \(payloadType)")
                 return
             }

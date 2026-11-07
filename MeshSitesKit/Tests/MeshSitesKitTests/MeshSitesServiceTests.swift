@@ -21,6 +21,15 @@ final class MeshSitesServiceTests: XCTestCase {
                 lock.lock(); _relayed.append((id, relay, Wire.decodeSubtype(payload))); lock.unlock()
             }
         }
+        /// Peers whose BLOCK replies get one byte flipped (a hostile seeder).
+        var corrupting: Set<Data> = []
+        /// Extra delay for everything a peer sends (to order HAVEs deterministically).
+        var delay: [Data: TimeInterval] = [:]
+        func deliverDirect(_ payload: Data, to peer: Data, from sender: Data) {
+            var p = payload
+            if corrupting.contains(sender), Wire.decodeSubtype(p) == Wire.Sub.block, p.count > 8 { p[p.count - 1] ^= 0xff }
+            nodes[peer]?.receiveDirect(payload: p, from: sender)
+        }
     }
 
     func makeNode(_ id: String, link: Link, seeding: Bool, sites: [String] = []) throws -> MeshSitesService {
@@ -33,7 +42,11 @@ final class MeshSitesServiceTests: XCTestCase {
         link.nodes[me] = svc
         svc.attach(.init(selfID: { me }, send: { [weak link] payload, ttl, recipient, sign in
             // Async, like bitchat's message queue: never re-enters the sender's queue.
-            DispatchQueue.global().async { link?.deliver(payload, ttl: ttl, recipient: recipient, from: me, sign: sign) }
+            let d = link?.delay[me] ?? 0
+            DispatchQueue.global().asyncAfter(deadline: .now() + d) { link?.deliver(payload, ttl: ttl, recipient: recipient, from: me, sign: sign) }
+        }, sendDirect: { [weak link] payload, peer in
+            let d = link?.delay[me] ?? 0
+            DispatchQueue.global().asyncAfter(deadline: .now() + d) { link?.deliverDirect(payload, to: peer, from: me) }
         }))
         return svc
     }
@@ -90,6 +103,48 @@ final class MeshSitesServiceTests: XCTestCase {
         XCTAssertFalse(a.receive(payload: announce, sender: evil, recipient: nil, ttl: 7, authenticated: true), "TTL above the ANNOUNCE cap must not be relayed")
         XCTAssertTrue(a.receive(payload: Data([0x01, 0x77]), sender: evil, recipient: nil, ttl: 5, authenticated: true), "unknown sub-types are relayed like bitchat does")
         waitFor("spam counted") { a.spamStrikes == 1 }
+    }
+
+    func testDownloadsASiteFromANeighbour() throws {
+        let link = Link()
+        let a = try makeNode("a1a1a1a1a1a1a1a1", link: link, seeding: true, sites: ["site-basic.car"])
+        let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)
+        let root = try XCTUnwrap(a.store.sites.first?.root)
+        waitFor("attached") { a.attached && b.attached }
+        b.download(root: root)
+        waitFor("B finished", timeout: 15) { b.downloads[root]?.phase == .done }
+        XCTAssertTrue(b.store.sites.contains { $0.root == root })
+        let d = try XCTUnwrap(b.downloads[root])
+        XCTAssertEqual(d.phase, .done)
+        XCTAssertEqual(d.blocks, a.store.sites.first?.blockCount)
+        XCTAssertEqual(d.peer, "a1a1a1a1a1a1a1a1")
+        // The stored copy renders like an imported one.
+        XCTAssertNoThrow(try b.store.source(for: root))
+    }
+
+    func testCorruptSeederIsSkipped() throws {
+        let link = Link()
+        let evil = try makeNode("e0e0e0e0e0e0e0e0", link: link, seeding: true, sites: ["site-basic.car"])
+        let good = try makeNode("a1a1a1a1a1a1a1a1", link: link, seeding: true, sites: ["site-basic.car"])
+        let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)
+        link.corrupting = [Data(Hex.decode("e0e0e0e0e0e0e0e0")!)]
+        link.delay[Data(Hex.decode("a1a1a1a1a1a1a1a1")!)] = 0.3 // Evil's HAVE arrives first, so Evil is asked first
+        let root = try XCTUnwrap(good.store.sites.first?.root)
+        waitFor("attached") { evil.attached && good.attached && b.attached }
+        b.download(root: root)
+        waitFor("B stored the site", timeout: 20) { b.store.sites.contains { $0.root == root } }
+        XCTAssertEqual(b.downloads[root]?.peer, "a1a1a1a1a1a1a1a1", "finished from the honest seeder")
+        XCTAssertTrue(b.log.contains { $0.contains("rejected a block from e0e0e0") }, "the corrupt block was rejected: \(b.log)")
+    }
+
+    func testDownloadWithNoHolderFails() throws {
+        let link = Link()
+        let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)
+        waitFor("attached") { b.attached }
+        let root = "bafybeid4yps7awrai7spe7wdnz6d5lvsgs2fa62xc3c2blsavaafryhj7u"
+        b.download(root: root)
+        waitFor("download gives up", timeout: 8) { b.downloads[root]?.phase == .failed }
+        XCTAssertEqual(b.downloads[root]?.error, "nobody nearby has it")
     }
 
     func testUnattachedServiceBehavesLikeAnUnpatchedNode() {
