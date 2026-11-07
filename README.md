@@ -4,7 +4,7 @@ Open a static website pinned to IPFS (optionally addressed by an ENS name such a
 
 Nothing trusts the relaying peers: every block is checked against its CID hash, and names are checked by signature.
 
-**Status:** M1 (publisher CLI) done. The iOS/macOS app is not started yet. See `HANDOFF-meshsites.md` for the plan and `docs/decisions.md` for what changed after reading bitchat's source.
+**Status:** M1 (publisher CLI) and Phase W (web testbed, `web/`) done. The iOS/macOS app (M2) waits on Xcode. See `HANDOFF-meshsites.md` for the plan and `docs/decisions.md` for what changed after reading bitchat's source.
 
 ## Layout
 
@@ -14,7 +14,8 @@ Nothing trusts the relaying peers: every block is checked against its CID hash, 
 | `protocol/vectors/` | normative test vectors (shared by TypeScript and Swift) |
 | `protocol/ts/` | TypeScript implementation (`@meshsites/protocol`) |
 | `cli/` | `meshsites` publisher CLI |
-| `docs/` | bitchat notes, design decisions |
+| `web/` | browser simulator, multi-tab WebRTC nodes, offline viewer (`npm run web`; `npm run build:static` for IPFS) |
+| `docs/` | bitchat notes, design decisions, benchmarks |
 
 ## CLI
 

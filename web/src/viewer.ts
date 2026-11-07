@@ -11,6 +11,10 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const enc = new TextEncoder();
 
 async function registerSw(): Promise<void> {
+  // Path gateways (…/ipfs/<cid>/) share one origin across all content and
+  // can't serve /sw.js or /site/ from this build's root.
+  if (/^\/(ipfs|ipns)\//.test(location.pathname))
+    throw new Error('The viewer needs its own origin. Open it at https://meshsites.eth.limo/viewer.html (or any subdomain gateway).');
   if (!('serviceWorker' in navigator)) throw new Error('Service workers are unavailable (needs https or localhost).');
   const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/site/' });
   const sw = reg.installing ?? reg.waiting ?? reg.active;

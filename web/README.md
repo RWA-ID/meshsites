@@ -14,6 +14,16 @@ node web/server.ts --lan   # also listen on the LAN
 | `tab.html?name=A` | **Multi-tab.** Each tab is one node, linked to chosen tabs over WebRTC data channels (signalling through this server, no ICE servers). BLE pacing and loss are applied in software. |
 | `viewer.html` | **Offline viewer.** Renders a stored site at `/site/<cid>/` through a service worker that re-verifies the CAR. Includes a **no-network probe**. |
 
+## Static build (meshsites.eth)
+
+```sh
+npm run build:static   # → web/out/ (~584 KiB), prints its CIDv1
+```
+
+`web/out/` is pin-ready: simulator + viewer, minified, with `sw.js` at the root and the demo vectors. The multi-tab page is left out (it needs the signalling server). Serve it from the **root of an origin**, e.g. `https://meshsites.eth.limo/`. On a path gateway (`…/ipfs/<cid>/`) the simulator works, but the viewer can't register `/sw.js` and says so.
+
+The printed CID matches `ipfs add -r --cid-version=1 web/out` (checked with Kubo 0.43.1). If your pinning service chunks differently, the CID it returns is the one to put in the contenthash.
+
 ## Viewer security model (testbed)
 
 - The service worker is the trust boundary. It re-reads the CAR from IndexedDB and serves only after `readCar` + `verifyDag` pass.
