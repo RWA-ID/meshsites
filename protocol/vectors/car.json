@@ -1,4 +1,9 @@
 {
+  "probe": {
+    "input": "probe-site",
+    "car": "probe-site.car",
+    "rootCid": "bafybeignj2fdho6vyulrnuo266j7nb4ec23g76i7iz64kr7gobye56rzye"
+  },
   "description": "CAR packaging vectors. site-basic/ is the input; every implementation must reproduce rootCid and block list byte-for-byte, accept site-basic.car, and reject every negative CAR.",
   "meshProfile": {
     "cidVersion": 1,

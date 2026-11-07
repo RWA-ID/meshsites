@@ -108,7 +108,12 @@ async function siteVectors() {
     cars.push({ file: n.file, why: n.why, expect: { ok: false, errorContains: n.error } });
   }
 
+  // The no-network probe site, rendered by the viewers' explicit network test.
+  const probe = await buildSiteCar((await readSiteDir(join(VEC, 'probe-site'))).files);
+  await writeFile(join(VEC, 'probe-site.car'), probe.car);
+
   return {
+    probe: { input: 'probe-site', car: 'probe-site.car', rootCid: probe.root.toString() },
     description: 'CAR packaging vectors. site-basic/ is the input; every implementation must reproduce rootCid and block list byte-for-byte, accept site-basic.car, and reject every negative CAR.',
     meshProfile: {
       cidVersion: 1,

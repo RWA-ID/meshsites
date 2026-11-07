@@ -1,4 +1,5 @@
 import SwiftUI
+import MeshSitesKit // MeshSites: offline websites over the mesh
 
 /// The sheet behind the "bitchat/" logo: a segmented Settings/Info surface.
 /// Settings gathers every user preference (appearance, voice, connectivity
@@ -19,6 +20,7 @@ struct AppInfoView: View {
     var onPanicWipe: (@MainActor () -> Void)?
 
     @State private var showTopology = false
+    @State private var showMeshSites = false // MeshSites
     @State private var liveVoiceEnabled = PTTSettings.liveVoiceEnabled
     @State private var locationNotesEnabled = LocationNotesSettings.enabled
     @State private var hideMessagePreviews = NotificationPrivacySettings.hideMessagePreviews
@@ -279,6 +281,9 @@ struct AppInfoView: View {
                 MeshTopologyView(provider: topologyProvider)
             }
         }
+        .sheet(isPresented: $showMeshSites) {
+            MeshSitesView()
+        }
         #else
         NavigationView {
             VStack(spacing: 0) {
@@ -301,6 +306,9 @@ struct AppInfoView: View {
             if let topologyProvider {
                 MeshTopologyView(provider: topologyProvider)
             }
+        }
+        .sheet(isPresented: $showMeshSites) {
+            MeshSitesView()
         }
         #endif
     }
@@ -785,6 +793,28 @@ struct AppInfoView: View {
                     .buttonStyle(.plain)
                     .accessibilityHint(Text("app_info.network.topology.hint"))
                 }
+            }
+
+            // MeshSites: offline websites (ios/ fork patch, see docs/decisions.md)
+            VStack(alignment: .leading, spacing: 16) {
+                SectionHeader(verbatim: String(localized: "app_info.meshsites.title", defaultValue: "Offline websites"))
+
+                Button {
+                    showMeshSites = true
+                } label: {
+                    HStack(spacing: 0) {
+                        FeatureRow(info: AppInfoFeatureInfo(
+                            icon: "globe.badge.chevron.backward",
+                            resolvedTitle: String(localized: "app_info.meshsites.open", defaultValue: "MeshSites"),
+                            resolvedDescription: String(localized: "app_info.meshsites.description", defaultValue: "Open websites stored on this device, with no internet. Every block is checked against its content hash.")
+                        ))
+                        Image(systemName: "chevron.right")
+                            .font(.bitchatSystem(size: 12))
+                            .foregroundColor(secondaryTextColor)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
 
             // Features
