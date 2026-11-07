@@ -5,3 +5,4 @@ dist/
 !protocol/vectors/*.car
 .env*
 .DS_Store
+!MeshSitesKit/Sources/MeshSitesKit/Resources/*.car
