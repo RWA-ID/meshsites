@@ -1130,6 +1130,7 @@ final class ChatViewModel: ObservableObject, BitchatDelegate, SynchronousMessage
             startSuspendedForPanicRecovery: startSuspendedForRecovery
         )
         meshService.sfMetrics = .shared
+        meshService.attachMeshSites() // MeshSites
         self.init(
             keychain: keychain,
             idBridge: idBridge,

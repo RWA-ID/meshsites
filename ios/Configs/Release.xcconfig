@@ -10,3 +10,6 @@ CODE_SIGN_STYLE = Automatic
 
 PRODUCT_BUNDLE_IDENTIFIER = chat.bitchat
 APP_GROUP_ID = group.chat.bitchat
+
+// MeshSites fork patch 6 (docs/decisions.md D11): local signing for Release test builds, as Debug does.
+#include? "Local.xcconfig"

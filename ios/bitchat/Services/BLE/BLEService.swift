@@ -1,5 +1,6 @@
 import BitLogger
 import BitFoundation
+import MeshSitesKit // MeshSites
 import Foundation
 import CoreBluetooth
 import Combine
@@ -6044,7 +6045,13 @@ extension BLEService {
             guard handleLeave(packet, from: senderID) else { return }
 
         case .none:
-            SecureLogger.warning("⚠️ Unknown message type: \(packet.type)", category: .session)
+            // MeshSites (fork patch, docs/decisions.md D12): public 0x4D gossip.
+            // A drop verdict (malformed, TTL over cap, rate-limited, …) skips the relay.
+            if packet.type == MeshSitesService.messageType {
+                guard handleMeshSitesPacket(packet, from: senderID) else { return }
+            } else {
+                SecureLogger.warning("⚠️ Unknown message type: \(packet.type)", category: .session)
+            }
         }
         
         if forwardAlongRouteIfNeeded(packet) {
@@ -7184,4 +7191,63 @@ extension BLEService {
         }
     }
 
+}
+
+// MARK: - MeshSites (fork patch, docs/decisions.md D11/D12)
+
+extension BLEService {
+    /// Connects MeshSites to this transport. Called once from ChatViewModel.
+    func attachMeshSites() {
+        MeshSitesService.shared.attach(.init(
+            selfID: { [weak self] in self?.myPeerIDData ?? Data() },
+            send: { [weak self] payload, ttl, recipient, sign in
+                self?.sendMeshSites(payload, ttl: ttl, recipient: recipient, sign: sign)
+            }
+        ))
+    }
+
+    /// One public 0x4D packet. Returns false when it must not be relayed.
+    private func handleMeshSitesPacket(_ packet: BitchatPacket, from senderID: PeerID) -> Bool {
+        guard senderID != myPeerID else { return false }
+        // Same check as public voice frames: the sender's announced signing key.
+        let key = peerRegistry.snapshotByID[senderID]?.signingPublicKey
+        let authenticated = packet.signature != nil
+            && (key.map { noiseService.verifyPacketSignature(packet, publicKey: $0) } ?? false)
+        return MeshSitesService.shared.receive(
+            payload: packet.payload,
+            sender: packet.senderID,
+            recipient: packet.recipientID,
+            ttl: packet.ttl,
+            authenticated: authenticated
+        )
+    }
+
+    /// Broadcast (or address, with a source route when known) a public 0x4D packet.
+    private func sendMeshSites(_ payload: Data, ttl: UInt8, recipient: Data?, sign: Bool) {
+        messageQueue.async { [weak self] in
+            guard let self else { return }
+            let packet = BitchatPacket(
+                type: MeshSitesService.messageType,
+                senderID: self.myPeerIDData,
+                recipientID: recipient,
+                timestamp: UInt64(Date().timeIntervalSince1970 * 1000),
+                payload: payload,
+                signature: nil,
+                ttl: ttl
+            )
+            let out: BitchatPacket
+            if sign {
+                guard let signed = self.noiseService.signPacket(packet) else {
+                    SecureLogger.error("❌ Failed to sign MeshSites packet", category: .security)
+                    return
+                }
+                out = signed
+            } else {
+                out = packet
+            }
+            // Don't handle a relayed copy of our own packet.
+            self.messageDeduplicator.markProcessed(BLESelfBroadcastTracker.dedupID(for: out))
+            self.broadcastPacket(out)
+        }
+    }
 }

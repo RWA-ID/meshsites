@@ -11,12 +11,17 @@ extension UTType {
 /// Entry point shown from bitchat's app info screen.
 public struct MeshSitesView: View {
     @ObservedObject var store: SiteStore
+    @ObservedObject var mesh: MeshSitesService
     @State private var importing = false
     @State private var message: String?
     @State private var openSite: StoredSite?
     @State private var showProbe = false
+    @State private var showMesh = false
 
-    public init(store: SiteStore = .shared) { self.store = store }
+    public init(store: SiteStore = .shared, mesh: MeshSitesService = .shared) {
+        self.store = store
+        self.mesh = mesh
+    }
 
     public var body: some View {
         NavigationStack {
@@ -37,6 +42,18 @@ public struct MeshSitesView: View {
                     .onDelete { idx in idx.map { store.sites[$0].root }.forEach(store.delete) }
                     Button { importing = true } label: { Label("Import a .car file", systemImage: "square.and.arrow.down") }
                     if let message { Text(message).font(.footnote).foregroundStyle(.secondary) }
+                }
+                Section {
+                    Toggle("Share my sites with nearby devices", isOn: $mesh.seeding)
+                    Button { showMesh = true } label: {
+                        Label("Nearby sites (\(mesh.nearby.filter { !$0.stored }.count))", systemImage: "dot.radiowaves.left.and.right")
+                    }
+                } header: {
+                    Text("Mesh")
+                } footer: {
+                    Text(mesh.attached
+                         ? "Sharing announces your stored sites over Bluetooth and answers requests for them. Off by default."
+                         : "The mesh is not connected yet.")
                 }
                 Section {
                     Button { showProbe = true } label: { Label("Run the no-network test", systemImage: "network.slash") }
@@ -60,6 +77,7 @@ public struct MeshSitesView: View {
             }
             .sheet(item: $openSite) { site in SiteBrowserView(site: site, store: store) }
             .sheet(isPresented: $showProbe) { ProbeView(store: store) }
+            .sheet(isPresented: $showMesh) { MeshActivityView(mesh: mesh) }
         }
     }
 }
@@ -235,4 +253,55 @@ struct WebViewHost: PlatformViewRepresentable {
     func makeNSView(context: Context) -> WKWebView { makeWebView(context) }
     func updateNSView(_ view: WKWebView, context: Context) {}
     #endif
+}
+
+/// M3 test screen: sites heard over the mesh, who holds them, and recent gossip.
+struct MeshActivityView: View {
+    @ObservedObject var mesh: MeshSitesService
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    if mesh.nearby.isEmpty {
+                        Text("Nothing heard yet. Sites appear here when a nearby device with sharing on announces them (about once a minute).")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(mesh.nearby) { site in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(site.root).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
+                                if site.stored { Text("stored").font(.caption2).foregroundStyle(.secondary) }
+                            }
+                            Text("\(site.peers) device(s), nearest \(site.nearestHops) hop(s)").font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Button(mesh.probing.contains(site.root) ? "Asking…" : "Who has it?") { mesh.probe(root: site.root) }
+                                    .buttonStyle(.bordered)
+                                    .disabled(mesh.probing.contains(site.root))
+                                if let holders = mesh.holders[site.root], !mesh.probing.contains(site.root) {
+                                    Text(holders.isEmpty ? "no answer" : holders.map { "\(MeshSitesService.short($0.peer)) (\($0.hops) hop)" }.joined(separator: ", "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Nearby sites")
+                }
+                Section {
+                    ForEach(Array(mesh.log.reversed().enumerated()), id: \.offset) { _, line in
+                        Text(line).font(.caption2.monospaced())
+                    }
+                } header: {
+                    Text("Activity")
+                } footer: {
+                    Text("Rejected packets: \(mesh.spamStrikes)")
+                }
+            }
+            .navigationTitle("Mesh")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
 }

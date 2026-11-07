@@ -49,6 +49,9 @@ public final class Gossip {
         public let message: Wire.Message
         public let ttl: UInt8
         public let recipient: String?
+        public init(message: Wire.Message, ttl: UInt8, recipient: String?) {
+            self.message = message; self.ttl = ttl; self.recipient = recipient
+        }
     }
 
     public struct Have: Equatable {
@@ -106,7 +109,8 @@ public final class Gossip {
         Wire.Sub.want: Wire.TTL.want, Wire.Sub.have: Wire.TTL.have,
     ]
 
-    public let config: Config
+    /// Mutable so a setting (e.g. seeding) can change without losing what the node has learned.
+    public var config: Config
     public let selfID: String
     /// Keyed by root CID string. Insertion order is kept for ANNOUNCE.
     public private(set) var sites: [String: Site] = [:]
