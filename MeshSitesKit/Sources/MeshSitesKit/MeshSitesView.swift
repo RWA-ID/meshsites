@@ -275,10 +275,17 @@ struct MeshActivityView: View {
                                 if site.stored { Text("stored").font(.caption2).foregroundStyle(.secondary) }
                             }
                             Text("\(site.peers) device(s), nearest \(site.nearestHops) hop(s)").font(.caption).foregroundStyle(.secondary)
+                            if let d = mesh.downloads[site.root] { DownloadLine(d: d) }
                             HStack {
                                 Button(mesh.probing.contains(site.root) ? "Asking…" : "Who has it?") { mesh.probe(root: site.root) }
                                     .buttonStyle(.bordered)
                                     .disabled(mesh.probing.contains(site.root))
+                                if !site.stored {
+                                    let d = mesh.downloads[site.root]
+                                    Button("Download") { mesh.download(root: site.root) }
+                                        .buttonStyle(.borderedProminent)
+                                        .disabled(d?.phase == .asking || d?.phase == .downloading)
+                                }
                                 if let holders = mesh.holders[site.root], !mesh.probing.contains(site.root) {
                                     Text(holders.isEmpty ? "no answer" : holders.map { "\(MeshSitesService.short($0.peer)) (\($0.hops) hop)" }.joined(separator: ", "))
                                         .font(.caption)
@@ -303,5 +310,25 @@ struct MeshActivityView: View {
             .navigationTitle("Mesh")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+    }
+}
+
+struct DownloadLine: View {
+    let d: MeshSitesService.Download
+
+    var body: some View {
+        let kb = d.bytes / 1024
+        let secs = d.seconds.map { String(format: "%.1f s", $0) } ?? ""
+        let rate = (d.seconds ?? 0) > 0 ? String(format: ", %.1f KB/s", Double(d.bytes) / 1024 / d.seconds!) : ""
+        let from = d.peer.map { " from \(MeshSitesService.short($0)) over \(d.via == "bulk" ? "Wi-Fi" : "Bluetooth")" } ?? ""
+        Group {
+            switch d.phase {
+            case .asking: Text("Looking for holders…")
+            case .downloading: Text("\(d.blocks)/\(max(d.expectedBlocks, d.blocks)) blocks, \(kb) KB\(from)")
+            case .done: Text("Downloaded \(d.blocks) blocks, \(kb) KB in \(secs)\(rate)\(from). Stored.")
+            case .failed: Text("Failed: \(d.error ?? "unknown")").foregroundStyle(.red)
+            }
+        }
+        .font(.caption)
     }
 }

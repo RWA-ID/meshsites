@@ -9,10 +9,13 @@ import MeshSitesCore
 /// packet to `receive(...)` and relays it only if that returns true, and it
 /// gives us a `Transport` to send packets with. Thread-safe: `receive` is
 /// called on bitchat's BLE queue; the UI state is published on the main queue.
-public final class MeshSitesService: ObservableObject {
+/// `@unchecked Sendable`: mutable state is only touched on `queue`, `@Published` values only on the main queue.
+public final class MeshSitesService: ObservableObject, @unchecked Sendable {
     public static let shared = MeshSitesService()
     /// bitchat outer MessageType for public MeshSites gossip (decisions D4).
     public static let messageType: UInt8 = Wire.messageType
+    /// bitchat NoisePayloadType for direct MeshSites messages inside a session (decisions D9).
+    public static let noisePayloadType: UInt8 = Wire.noisePayloadType
 
     /// How bitchat lets us send. All fields are called from our own queue.
     public struct Transport {
@@ -20,9 +23,14 @@ public final class MeshSitesService: ObservableObject {
         public var selfID: () -> Data
         /// Broadcast (recipient nil) or address a public 0x4D packet; `sign` adds bitchat's Ed25519 packet signature.
         public var send: (_ payload: Data, _ ttl: UInt8, _ recipient: Data?, _ sign: Bool) -> Void
-        public init(selfID: @escaping () -> Data, send: @escaping (Data, UInt8, Data?, Bool) -> Void) {
+        /// A direct message (BLOCK_REQ / BLOCK / BLOCK_NONE) to one peer inside its Noise session
+        /// (Noise payload type 0x4D; bitchat handshakes first if needed).
+        public var sendDirect: (_ payload: Data, _ peer: Data) -> Void
+        public init(selfID: @escaping () -> Data, send: @escaping (Data, UInt8, Data?, Bool) -> Void,
+                    sendDirect: @escaping (Data, Data) -> Void = { _, _ in }) {
             self.selfID = selfID
             self.send = send
+            self.sendDirect = sendDirect
         }
     }
 
@@ -42,6 +50,19 @@ public final class MeshSitesService: ObservableObject {
         public let blockCount: Int
     }
 
+    /// One site being pulled from the mesh (M4).
+    public struct Download: Equatable {
+        public enum Phase: String { case asking, downloading, done, failed }
+        public var phase: Phase
+        public var blocks = 0
+        public var bytes = 0
+        public var expectedBlocks = 0
+        public var peer: String?
+        public var via: String?
+        public var seconds: Double?
+        public var error: String?
+    }
+
     /// Share (announce + answer WANTs for) the sites stored on this device. Opt-in.
     @Published public var seeding: Bool {
         didSet {
@@ -50,6 +71,7 @@ public final class MeshSitesService: ObservableObject {
             queue.async { [weak self] in
                 guard let self else { return }
                 self.gossip.config.seeding = on
+                self.server.config.seeding = on
                 if on { self.scheduleAnnounce(after: 1) }
             }
         }
@@ -61,6 +83,7 @@ public final class MeshSitesService: ObservableObject {
     @Published public private(set) var probing: Set<String> = []
     @Published public private(set) var log: [String] = []
     @Published public private(set) var spamStrikes = 0
+    @Published public private(set) var downloads: [String: Download] = [:]
 
     public let store: SiteStore
     private let queue = DispatchQueue(label: "meshsites.service")
@@ -68,6 +91,14 @@ public final class MeshSitesService: ObservableObject {
     private var gossip: Gossip
     private var announceTimer: DispatchSourceTimer?
     private var pendingWants: [String: String] = [:] // reqId hex → root
+    /// HAVEs collected per root while a WANT is open (on `queue`).
+    private var haveCollect: [String: [Fetch.Holder]] = [:]
+    private let server: BlockServer
+    private var fetchers: [String: Fetcher] = [:]
+    private var fetchTimers: [String: DispatchSourceTimer] = [:]
+    private var fetchStarted: [String: Date] = [:]
+    /// Recently served sites (root → blocks), so a batch doesn't re-read the CAR per request.
+    private var sourceCache: [(root: String, blocks: DictBlockSource)] = []
     private var storeSink: AnyCancellable?
     /// Last value of `store.sites`, owned by `queue`.
     private var storedSites: [StoredSite] = []
@@ -83,6 +114,9 @@ public final class MeshSitesService: ObservableObject {
         cfg.seeding = seeding
         cfg.bulkCapable = false // peer-to-peer Wi-Fi arrives in M4
         gossip = Gossip(selfID: "", config: cfg)
+        var scfg = BlockServer.Config()
+        scfg.seeding = seeding
+        server = BlockServer(config: scfg)
     }
 
     /// Called once by bitchat at startup.
@@ -100,6 +134,7 @@ public final class MeshSitesService: ObservableObject {
             self.storeSink = self.store.$sites.receive(on: self.queue).sink { [weak self] sites in
                 guard let self else { return }
                 self.storedSites = sites
+                self.sourceCache.removeAll { c in !sites.contains { $0.root == c.root } }
                 self.syncSites()
                 self.publish()
                 if self.gossip.config.seeding { self.scheduleAnnounce(after: 0.5 + Double.random(in: 0...1)) }
@@ -120,6 +155,8 @@ public final class MeshSitesService: ObservableObject {
             }
             for o in v.send { send(o) }
             if let h = v.have, let root = pendingWants[Hex.encode(h.reqId)] {
+                haveCollect[root, default: []].append(Fetch.Holder(peer: h.from, via: .ble, hops: Int(h.hops),
+                                                                   sizeBytes: Int(h.sizeBytes), blockCount: Int(h.blockCount)))
                 appendLog("HAVE from \(Self.short(h.from)): \(Self.short(root)) at \(h.hops) hop(s)")
                 let holder = Holder(peer: h.from, hops: Int(h.hops), sizeBytes: Int(h.sizeBytes), blockCount: Int(h.blockCount))
                 DispatchQueue.main.async {
@@ -152,6 +189,164 @@ public final class MeshSitesService: ObservableObject {
                 DispatchQueue.main.async { self.probing.remove(root) }
             }
         }
+    }
+
+
+
+    // MARK: block transfer (M4)
+
+    /// bitchat hook: one decrypted direct message (Noise payload type 0x4D) from `peer`.
+    public func receiveDirect(payload: Data, from peer: Data) {
+        queue.async { [self] in
+            guard let t = transport else { return }
+            let p = peer.hex
+            let now = Date().timeIntervalSince(start) * 1000
+            appendLog("direct \(Self.label(payload)) from \(Self.short(p)), \(payload.count) B")
+            let v = server.handle(peer: p, payload: Array(payload), now: now) { [self] root, cid in self.lookup(root: root, cid: cid) }
+            switch v {
+            case .reply(let messages):
+                appendLog("BLOCK_REQ from \(Self.short(p)): serving \(messages.filter { if case .block = $0 { return true }; return false }.count)/\(messages.count)")
+                for m in messages { if let b = try? Wire.encode(m) { t.sendDirect(Data(b), peer) } }
+            case .block(let cid, let bytes):
+                for (root, f) in fetchers { drive(root, f.onBlock(peer: p, cid: cid, bytes: bytes, now: now)) }
+            case .blockNone(let cid):
+                for (root, f) in fetchers { drive(root, f.onBlockNone(peer: p, cid: cid, now: now)) }
+            case .drop(let reason, let spam):
+                if spam || reason == "not-seeding" { appendLog("direct message from \(Self.short(p)) dropped: \(reason)") }
+            }
+            publish()
+        }
+    }
+
+    /// Find holders of `root` (WANT, 3 s), then pull it block by block and store it.
+    public func download(root: String) {
+        guard let cid = try? CID.parse(root) else { return }
+        queue.async { [self] in
+            guard transport != nil, fetchers[root] == nil else { return }
+            setDownload(root, Download(phase: .asking))
+            fetchStarted[root] = Date()
+            haveCollect[root] = []
+            sendWant(root: root, cid: cid)
+            queue.asyncAfter(deadline: .now() + Self.haveWindow) { [self] in
+                let holders = haveCollect[root] ?? []
+                haveCollect[root] = nil
+                guard !holders.isEmpty else {
+                    finishDownload(root, error: "nobody nearby has it")
+                    return
+                }
+                let local = DictBlockSource([:])
+                let f = Fetcher(root: cid, holders: holders, local: local)
+                fetchers[root] = f
+                appendLog("downloading \(Self.short(root)) from \(f.holders.map { "\(Self.short($0.peer)) (\($0.hops) hop)" }.joined(separator: ", "))")
+                drive(root, f.start(now: Date().timeIntervalSince(start) * 1000))
+            }
+        }
+    }
+
+    private func drive(_ root: String, _ actions: [Fetch.Action]) {
+        guard let t = transport, let f = fetchers[root] else { return }
+        for a in actions {
+            switch a {
+            case .request(let peer, let via, let r, let cids, let deadline):
+                if let msg = try? Wire.encode(.blockReq(root: r, cids: cids)), let to = Hex.decode(peer) {
+                    let budget = (deadline - Date().timeIntervalSince(start) * 1000) / 1000
+                    appendLog("BLOCK_REQ \(cids.count) block(s) → \(Self.short(peer)) over \(via.rawValue), \(String(format: "%.1f", budget)) s budget")
+                    t.sendDirect(Data(msg), Data(to))
+                }
+                updateDownload(root) { $0.phase = .downloading; $0.peer = peer; $0.via = via.rawValue; $0.expectedBlocks = f.current?.blockCount ?? 0 }
+                scheduleFetchTick(root, at: deadline)
+            case .stored(_, let b):
+                updateDownload(root) { $0.blocks += 1; $0.bytes += b.count }
+            case .blame(let peer, let reason):
+                appendLog("rejected a block from \(Self.short(peer)): \(reason)")
+            case .next(let from, let reason):
+                appendLog("\(Self.short(from)): \(reason), trying the next holder")
+            case .done(let total, let count):
+                appendLog("downloaded \(Self.short(root)): \(count) blocks, \(total) B")
+                storeFetched(root, f)
+            case .failed(let reason, let detail):
+                finishDownload(root, error: detail.map { "\(reason): \($0)" } ?? reason)
+            }
+        }
+    }
+
+    private func scheduleFetchTick(_ root: String, at deadline: Double) {
+        fetchTimers[root]?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        let delay = max(0, deadline - Date().timeIntervalSince(start) * 1000) / 1000 + 0.05
+        t.schedule(deadline: .now() + delay)
+        t.setEventHandler { [weak self] in
+            guard let self, let f = self.fetchers[root] else { return }
+            self.drive(root, f.tick(now: Date().timeIntervalSince(self.start) * 1000))
+        }
+        t.resume()
+        fetchTimers[root] = t
+    }
+
+    /// Write the verified DAG as a CAR (DFS order) and import it; the store verifies it again.
+    private func storeFetched(_ root: String, _ f: Fetcher) {
+        guard let cid = try? CID.parse(root) else { return }
+        var ordered: [(cid: CID, bytes: Bytes)] = []
+        var seen = Set<CID>()
+        var stack = [cid]
+        while let c = stack.popLast() {
+            guard seen.insert(c).inserted, let b = f.block(c) else { continue }
+            ordered.append((c, b))
+            if c.codec == Codec.dagPB, let node = try? PBNode.decode(b) { for l in node.links.reversed() { stack.append(l.hash) } }
+        }
+        let car = CARFile.write(root: cid, blocks: ordered)
+        let seconds = fetchStarted[root].map { Date().timeIntervalSince($0) }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                _ = try self.store.importCar(car, label: "from mesh")
+                self.queue.async { self.finishDownload(root, error: nil, seconds: seconds) }
+            } catch {
+                self.queue.async { self.finishDownload(root, error: error.localizedDescription) }
+            }
+        }
+    }
+
+    private func finishDownload(_ root: String, error: String?, seconds: Double? = nil) {
+        fetchers[root] = nil
+        fetchTimers[root]?.cancel()
+        fetchTimers[root] = nil
+        let secs = seconds ?? fetchStarted[root].map { Date().timeIntervalSince($0) }
+        fetchStarted[root] = nil
+        if let error { appendLog("download \(Self.short(root)) failed: \(error)") }
+        updateDownload(root) { $0.phase = error == nil ? .done : .failed; $0.error = error; $0.seconds = secs }
+    }
+
+    private func setDownload(_ root: String, _ d: Download) {
+        DispatchQueue.main.async { self.downloads[root] = d }
+    }
+
+    private func updateDownload(_ root: String, _ change: @escaping (inout Download) -> Void) {
+        DispatchQueue.main.async {
+            var d = self.downloads[root] ?? Download(phase: .asking)
+            change(&d)
+            self.downloads[root] = d
+        }
+    }
+
+    /// Blocks are only served from the complete stored site the request names.
+    private func lookup(root: CID, cid: CID) -> Bytes? {
+        let key = root.description
+        guard storedSites.contains(where: { $0.root == key }) else { return nil }
+        if let hit = sourceCache.first(where: { $0.root == key }) { return hit.blocks.block(cid) }
+        guard let (_, src) = store.readVerifiedSource(key) else { return nil }
+        sourceCache.insert((key, src), at: 0)
+        if sourceCache.count > 3 { sourceCache.removeLast() }
+        return src.block(cid)
+    }
+
+    private func sendWant(root: String, cid: CID) {
+        var reqId = Bytes(repeating: 0, count: 8)
+        for i in reqId.indices { reqId[i] = UInt8.random(in: 0...255) }
+        pendingWants[Hex.encode(reqId)] = root
+        appendLog("WANT \(Self.short(root))")
+        send(Gossip.Outgoing(message: .want(reqId: reqId, origTtl: Wire.TTL.want, root: cid, name: nil), ttl: Wire.TTL.want, recipient: nil))
+        queue.asyncAfter(deadline: .now() + Self.haveWindow + 0.5) { [self] in pendingWants[Hex.encode(reqId)] = nil }
     }
 
     // MARK: internals (on `queue`)
@@ -219,11 +414,36 @@ public final class MeshSitesService: ObservableObject {
 
     private func appendLog(_ line: String) {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
+        f.dateFormat = "HH:mm:ss.SSS"
         let entry = "\(f.string(from: Date())) \(line)"
         DispatchQueue.main.async {
             self.log.append(entry)
             if self.log.count > 40 { self.log.removeFirst(self.log.count - 40) }
+        }
+        Self.logQueue.async { Self.writeLogFile(entry) }
+    }
+
+    /// Activity log on disk, for test sessions: Library/Application Support/MeshSites/activity.log
+    /// (copy it off a device with `xcrun devicectl device copy from --domain-type appDataContainer`).
+    /// Capped at ~256 KB, keeping the newest half when it fills.
+    private static let logQueue = DispatchQueue(label: "meshsites.log")
+    private static let logURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("MeshSites/activity.log")
+
+    private static func writeLogFile(_ entry: String) {
+        let line = Data((entry + "\n").utf8)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let size = (try? fm.attributesOfItem(atPath: logURL.path)[.size] as? Int), size > 256 * 1024,
+           let old = try? Data(contentsOf: logURL) {
+            try? old.suffix(128 * 1024).write(to: logURL, options: .atomic)
+        }
+        if let h = try? FileHandle(forWritingTo: logURL) {
+            h.seekToEndOfFile()
+            h.write(line)
+            try? h.close()
+        } else {
+            try? line.write(to: logURL)
         }
     }
 
@@ -235,6 +455,9 @@ public final class MeshSitesService: ObservableObject {
         case Wire.Sub.nameRecord: return "NAME_RECORD"
         case Wire.Sub.want: return "WANT"
         case Wire.Sub.have: return "HAVE"
+        case Wire.Sub.blockReq: return "BLOCK_REQ"
+        case Wire.Sub.block: return "BLOCK"
+        case Wire.Sub.blockNone: return "BLOCK_NONE"
         case let s?: return String(format: "sub 0x%02x", s)
         case nil: return "?"
         }

@@ -207,6 +207,104 @@ public enum VectorRunner {
             }
         }
 
+        // ---- CAR writer: re-writing a CAR from its parsed blocks reproduces it exactly
+        for (name, data) in [("site-basic.car", bytes("site-basic.car")),
+                             ("meshsites.car", try? Array(Data(contentsOf: vectorsDir.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("release/meshsites.car"))))] {
+            guard let data, let car = try? CARFile.parse(data), let root = car.roots.first else { check("CAR write \(name)", false, "could not read"); continue }
+            let again = CARFile.write(root: root, blocks: car.blocks)
+            check("CAR write \(name) is byte-identical", again == data, "\(again.count) vs \(data.count) bytes")
+        }
+
+        // ---- fetch.json (M4 block transfer)
+        if let fv = json("fetch.json") {
+            var sets: [String: (root: CID, blocks: [CID: Bytes])] = [:]
+            for (name, s) in fv["blockSets"]?.object ?? [:] {
+                guard let r = s["root"]?.string, let root = try? CID.parse(r) else { continue }
+                var blocks: [CID: Bytes] = [:]
+                for (c, h) in s["blocks"]?.object ?? [:] { if let cid = try? CID.parse(c), let b = h.string.flatMap(Hex.decode) { blocks[cid] = b } }
+                sets[name] = (root, blocks)
+            }
+            func num(_ j: JSON?) -> Double? {
+                switch j { case .int(let i)?: return Double(i); case .double(let d)?: return d; default: return nil }
+            }
+            func enc(_ a: Fetch.Action) -> String {
+                switch a {
+                case .request(let p, let via, _, let cids, let d): return "request \(p) \(via.rawValue) \(cids.map(\.description).joined(separator: ",")) \(Int64(d))"
+                case .stored(let c, _): return "stored \(c)"
+                case .blame(let p, let r): return "blame \(p) \(r)"
+                case .next(let f, let r): return "next \(f) \(r)"
+                case .done(let t, let n): return "done \(t) \(n)"
+                case .failed(let r, _): return "failed \(r)"
+                }
+            }
+            func encJ(_ a: JSON) -> String {
+                let kind = a["a"]?.string ?? "?"
+                switch kind {
+                case "request": return "request \(a["peer"]?.string ?? "") \(a["via"]?.string ?? "") \((a["cids"]?.array ?? []).compactMap(\.string).joined(separator: ",")) \(Int64(num(a["deadline"]) ?? -1))"
+                case "stored": return "stored \(a["cid"]?.string ?? "")"
+                case "blame": return "blame \(a["peer"]?.string ?? "") \(a["reason"]?.string ?? "")"
+                case "next": return "next \(a["from"]?.string ?? "") \(a["reason"]?.string ?? "")"
+                case "done": return "done \(a["totalBytes"]?.int ?? -1) \(a["blockCount"]?.int ?? -1)"
+                case "failed": return "failed \(a["reason"]?.string ?? "")"
+                default: return kind
+                }
+            }
+            for sc in fv["fetch"]?.array ?? [] {
+                guard let id = sc["id"]?.string, let set = sets[sc["blockSet"]?.string ?? ""] else { check("fetch scenario", false, "malformed"); continue }
+                let holders = (sc["holders"]?.array ?? []).compactMap { h -> Fetch.Holder? in
+                    guard let p = h["peer"]?.string, let via = h["via"]?.string.flatMap(Fetch.Via.init(rawValue:)),
+                          let hops = h["hops"]?.int, let size = h["sizeBytes"]?.int, let count = h["blockCount"]?.int else { return nil }
+                    return Fetch.Holder(peer: p, via: via, hops: Int(hops), sizeBytes: Int(size), blockCount: Int(count))
+                }
+                let localSet = Set((sc["local"]?.array ?? []).compactMap { $0.string.flatMap { try? CID.parse($0) } })
+                let local = DictBlockSource(set.blocks.filter { localSet.contains($0.key) })
+                let f = Fetcher(root: set.root, holders: holders, local: local)
+                var failures: [String] = []
+                for (i, st) in (sc["steps"]?.array ?? []).enumerated() {
+                    guard let e = st["event"], let ev = e["ev"]?.string, let at = num(e["at"]) else { failures.append("step \(i): malformed"); continue }
+                    let cid = e["cid"]?.string.flatMap { try? CID.parse($0) }
+                    let acts: [Fetch.Action]
+                    switch ev {
+                    case "start": acts = f.start(now: at)
+                    case "tick": acts = f.tick(now: at)
+                    case "none": acts = cid.map { f.onBlockNone(peer: e["peer"]?.string ?? "", cid: $0, now: at) } ?? []
+                    default:
+                        guard let cid else { failures.append("step \(i): bad cid"); continue }
+                        var b = set.blocks[cid] ?? [1, 2, 3]
+                        if e["bytes"]?.string == "corrupt" { b[b.count >> 1] ^= 0xff }
+                        acts = f.onBlock(peer: e["peer"]?.string ?? "", cid: cid, bytes: b, now: at)
+                    }
+                    let got = acts.map(enc), want = (st["actions"]?.array ?? []).map(encJ)
+                    if got != want { failures.append("step \(i) (\(ev)): got \(got.filter { !$0.hasPrefix("stored") }) want \(want.filter { !$0.hasPrefix("stored") })") }
+                }
+                check("fetch \(id)", failures.isEmpty, failures.prefix(2).joined(separator: "; "))
+            }
+            if let site = sets["site-basic"] {
+                for sc in fv["server"]?.array ?? [] {
+                    guard let id = sc["id"]?.string else { continue }
+                    var cfg = BlockServer.Config()
+                    if sc["config"]?["seeding"] == .bool(false) { cfg.seeding = false }
+                    let s = BlockServer(config: cfg)
+                    var failures: [String] = []
+                    for (i, st) in (sc["steps"]?.array ?? []).enumerated() {
+                        guard let peer = st["peer"]?.string, let at = num(st["at"]), let p = st["payloadHex"]?.string.flatMap(Hex.decode), let e = st["expect"] else { continue }
+                        let v = s.handle(peer: peer, payload: p, now: at) { root, cid in root == site.root ? site.blocks[cid] : nil }
+                        let ok: Bool
+                        switch (v, e["kind"]?.string) {
+                        case (.reply(let ms), "reply"?):
+                            ok = ms.map { (try? Wire.encode($0)).map(Hex.encode) ?? "" } == (e["messagesHex"]?.array ?? []).compactMap(\.string)
+                        case (.block(let c, let b), "block"?): ok = c.description == e["cid"]?.string && Hex.encode(b) == e["bytesHex"]?.string
+                        case (.blockNone(let c), "block-none"?): ok = c.description == e["cid"]?.string
+                        case (.drop(let r, let sp), "drop"?): ok = r == e["reason"]?.string && (e["spam"] == .bool(true)) == sp
+                        default: ok = false
+                        }
+                        if !ok { failures.append("step \(i): got \(v)".prefix(200).description) }
+                    }
+                    check("server \(id)", failures.isEmpty, failures.joined(separator: "; "))
+                }
+            }
+        }
+
         // ---- the real meshsites.eth record (release/), as set on-chain
         let release = vectorsDir.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("release")
         if let b = try? Data(contentsOf: release.appendingPathComponent("meshsites.record.signed.json")), let signed = try? JSON.parse(Array(b)) {

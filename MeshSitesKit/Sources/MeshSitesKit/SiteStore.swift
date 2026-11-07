@@ -102,6 +102,17 @@ public final class SiteStore: ObservableObject {
         reload()
     }
 
+    /// Verified blocks of a stored site, read from disk on any thread (serving
+    /// BLOCK_REQ from the mesh queue). Nil if missing or not a complete, valid DAG.
+    nonisolated public func readVerifiedSource(_ root: String) -> (CID, DictBlockSource)? {
+        let url = dir.appendingPathComponent("\(root).car")
+        guard let data = try? Data(contentsOf: url), let parsed = try? Verify.readCar(Array(data)),
+              parsed.errors.isEmpty, parsed.root.description == root else { return nil }
+        let src = DictBlockSource(parsed.blocks)
+        guard Verify.verifyDag(root: parsed.root, source: src).ok else { return nil }
+        return (parsed.root, src)
+    }
+
     /// Verified blocks for rendering. Re-verifies the CAR on first load.
     public func source(for root: String) throws -> (CID, BlockSource) {
         if let l = loaded[root] { return l }

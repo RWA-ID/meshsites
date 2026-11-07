@@ -9,11 +9,11 @@
  */
 import { CID } from 'multiformats/cid';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { checkBlock, readCar, verifyDag, type BlockSource } from '../car.ts';
-import { LIMITS } from '../limits.ts';
+import { readCar, verifyDag, type BlockSource } from '../car.ts';
+import { Fetcher, type FetchAction, type Holder, rankHolders, Server } from '../fetch.ts';
 import { GossipPolicy, type Outgoing, type StoredName } from '../gossip.ts';
 import { type NameRecord, type RecordStatus, type SignedNameRecord } from '../record.ts';
-import { decodeMessage, encodeMessage, MAX_BLOCK_REQ, type MeshMessage, SUB, subtypeOf, TTL } from '../wire.ts';
+import { encodeMessage, type MeshMessage, SUB, subtypeOf, TTL } from '../wire.ts';
 import { BITCHAT, type BitchatRadio, type LinkKind, messageId, type RadioApp, type SimPacket } from './radio.ts';
 import type { Scheduler } from './scheduler.ts';
 
@@ -84,7 +84,8 @@ export class MeshSitesNode implements RadioApp, BlockSource {
   private noRelay = new Set<string>();
   private pendingHave = new Map<string, (h: Extract<MeshMessage, { t: 'have' }> & { from: string }) => void>();
   private nameWaiters = new Map<string, (() => void)[]>();
-  private inflight = new Map<string, Map<string, (b: Uint8Array | null) => void>>();
+  private server: Server;
+  private drivers = new Set<(peer: string, cid: CID, bytes: Uint8Array | null) => void>();
   private announceTimer?: number;
 
   readonly radio: BitchatRadio;
@@ -100,6 +101,7 @@ export class MeshSitesNode implements RadioApp, BlockSource {
       bulkCapable: this.opts.bulkCapable,
       announceIntervalMs: this.opts.announceIntervalMs,
     });
+    this.server = new Server({ seeding: this.opts.seeding });
     radio.app = this;
   }
 
@@ -249,41 +251,29 @@ export class MeshSitesNode implements RadioApp, BlockSource {
   // ---------------- direct sessions ----------------
 
   onDirect(peer: string, bytes: Uint8Array, via: LinkKind) {
-    let m: MeshMessage | null;
-    try {
-      m = decodeMessage(bytes);
-    } catch (e) {
-      this.flag(peer);
-      this.log(`bad direct message from ${peer.slice(0, 4)}: ${(e as Error).message}`);
-      return;
-    }
-    if (!m) return;
-    switch (m.t) {
-      case 'block-req': {
-        if (!this.opts.seeding) return;
-        for (const c of m.cids) {
-          let b = this.blocks.get(c.toString());
-          if (b && this.opts.corruptBlocks) {
-            b = b.slice();
-            b[b.length >> 1] ^= 0xff;
-          }
-          this.radio.sendDirect(peer, encodeMessage(b ? { t: 'block', cid: c, bytes: b } : { t: 'block-none', cid: c }), via);
-        }
-        return;
+    const lookup = (root: CID, cid: CID) => {
+      if (!this.sites.get(root.toString())?.complete) return undefined;
+      let b = this.blocks.get(cid.toString());
+      if (b && this.opts.corruptBlocks) {
+        b = b.slice();
+        b[b.length >> 1] ^= 0xff;
       }
+      return b;
+    };
+    const v = this.server.handle(peer, bytes, this.sched.now(), lookup);
+    switch (v.kind) {
+      case 'reply':
+        for (const m of v.messages) this.radio.sendDirect(peer, encodeMessage(m), via);
+        return;
       case 'block':
-      case 'block-none': {
-        const waiting = this.inflight.get(peer);
-        const k = m.cid.toString();
-        const resolve = waiting?.get(k);
-        if (!resolve) return; // unsolicited: ignore
-        waiting!.delete(k);
-        resolve(m.t === 'block' ? m.bytes : null);
+      case 'block-none':
+        for (const d of this.drivers) d(peer, v.cid, v.kind === 'block' ? v.bytes : null);
         return;
-      }
-      default:
-        this.flag(peer);
-        this.log(`${m.t} is not allowed in a direct session`);
+      case 'drop':
+        if (v.spam) {
+          this.flag(peer);
+          this.log(`bad direct message from ${peer.slice(0, 4)}: ${v.reason}`);
+        }
     }
   }
 
@@ -352,102 +342,98 @@ export class MeshSitesNode implements RadioApp, BlockSource {
       await this.sleep(this.opts.haveWindowMs);
       this.pendingHave.delete(hex(reqId));
 
-      const candidates = haves
-        .filter((h) => h.root.equals(root) && h.sizeBytes <= LIMITS.maxSiteBytes && !bad.has(h.from))
-        .map((h) => {
-          const bulk = h.hops === 1 && h.bulk.p2pWifi && this.opts.bulkCapable && this.radio.hasBulk(h.from);
-          return { ...h, via: (bulk ? 'bulk' : 'ble') as LinkKind, score: (bulk ? 0 : 100) + h.hops };
-        })
-        .sort((a, b) => a.score - b.score)
-        .filter((h, i, all) => all.findIndex((x) => x.from === h.from) === i);
-      this.log(`${haves.length} HAVE(s): ${candidates.map((c) => `${c.from.slice(0, 4)} ${c.hops}h ${c.via}`).join(', ') || 'none usable'}`);
+      const holders: Holder[] = haves
+        .filter((h) => h.root.equals(root) && !bad.has(h.from))
+        .map((h) => ({
+          peer: h.from,
+          via: h.hops === 1 && h.bulk.p2pWifi && this.opts.bulkCapable && this.radio.hasBulk(h.from) ? 'bulk' : 'ble',
+          hops: h.hops,
+          sizeBytes: h.sizeBytes,
+          blockCount: h.blockCount,
+        }));
+      const ranked = rankHolders(holders);
+      this.log(`${haves.length} HAVE(s): ${ranked.map((c) => `${c.peer.slice(0, 4)} ${c.hops}h ${c.via}`).join(', ') || 'none usable'}`);
 
-      for (const c of candidates) {
-        const src = { peer: c.from, via: c.via, hops: c.hops, blocks: 0 };
-        stats.sources.push(src);
-        const ok = await this.pullFrom(root, c.from, c.via, c.hops, c.blockCount, stats, src);
-        if (ok) {
-          const s = this.sites.get(k)!;
-          s.complete = true;
-          stats.ms = this.sched.now() - t0;
-          this.emit({ kind: 'site', node: this.radio.name, root: k, complete: true });
-          this.log(`site ${k.slice(0, 12)}… complete: ${stats.blocks} blocks, ${stats.bytes} B in ${Math.round(stats.ms)} ms`);
-          this.scheduleAnnounce(100 + this.rand() * 400);
-          return stats;
-        }
-        bad.add(c.from);
+      if (ranked.length && (await this.pull(root, ranked, stats, bad))) {
+        const s = this.sites.get(k)!;
+        s.complete = true;
+        stats.ms = this.sched.now() - t0;
+        this.emit({ kind: 'site', node: this.radio.name, root: k, complete: true });
+        this.log(`site ${k.slice(0, 12)}… complete: ${stats.blocks} blocks, ${stats.bytes} B in ${Math.round(stats.ms)} ms`);
+        this.scheduleAnnounce(100 + this.rand() * 400);
+        return stats;
       }
       stats.rewants++;
     }
     throw new Error(`could not fetch ${k}: no holder delivered a valid DAG`);
   }
 
-  /** Pull the whole DAG from one peer. Returns false if the peer failed (caller tries the next). */
-  private async pullFrom(
-    root: CID,
-    peer: string,
-    via: LinkKind,
-    hops: number,
-    expectedBlocks: number,
-    stats: FetchStats,
-    src: { blocks: number },
-  ): Promise<boolean> {
+  /** Drive one shared-policy Fetcher (fetch.ts) over the radio. Resolves true when the DAG is complete. */
+  private pull(root: CID, holders: Holder[], stats: FetchStats, bad: Set<string>): Promise<boolean> {
     const k = root.toString();
-    for (;;) {
-      const dag = verifyDag(root, this);
-      if (dag.errors.length) {
-        this.log(`DAG rejected: ${dag.errors[0]}`);
-        throw new Error(dag.errors.join('; '));
-      }
-      if (!this.sites.has(k)) this.sites.set(k, { root, sizeBytes: 0, blockCount: 0, complete: false });
-      const site = this.sites.get(k)!;
-      site.sizeBytes = dag.totalBytes;
-      site.blockCount = dag.reached.size - dag.missing.length;
-      if (dag.ok) return true;
-      if (dag.reached.size > 0xffff) throw new Error('too many blocks');
-
-      const batch = dag.missing.slice(0, MAX_BLOCK_REQ);
-      const waiting = this.inflight.get(peer) ?? new Map();
-      this.inflight.set(peer, waiting);
-      const results = batch.map((c) => new Promise<Uint8Array | null>((r) => waiting.set(c.toString(), r)));
-      this.radio.sendDirect(peer, encodeMessage({ t: 'block-req', root, cids: batch }), via);
-
-      // Generous timeout: BLE ~18 KB/s per hop, bulk ~2 MB/s.
-      const est = via === 'bulk' ? (batch.length * 16384) / 1000 : (batch.length * 16384 * hops) / 12;
-      const timeout = 4000 + est;
-      let timedOut = false;
-      const timer = this.sched.setTimeout(() => {
-        timedOut = true;
-        for (const c of batch) waiting.get(c.toString())?.(null);
-      }, timeout);
-
-      let failed = false;
-      for (let i = 0; i < batch.length; i++) {
-        const bytes = await results[i];
-        const cid = batch[i];
-        if (failed) continue;
-        if (!bytes) {
-          this.log(`${peer.slice(0, 4)}: ${timedOut ? 'timeout' : 'BLOCK_NONE'} for ${cid.toString().slice(0, 12)}…`);
-          failed = true;
-          continue;
+    return new Promise((resolve) => {
+      const f = new Fetcher(root, holders, this);
+      let timer: number | undefined;
+      let src: FetchStats['sources'][number] | undefined;
+      const finish = (ok: boolean) => {
+        if (timer !== undefined) this.sched.clearTimeout(timer);
+        this.drivers.delete(driver);
+        resolve(ok);
+      };
+      const run = (actions: FetchAction[]) => {
+        for (const x of actions) {
+          switch (x.a) {
+            case 'request': {
+              if (src?.peer !== x.peer) {
+                src = { peer: x.peer, via: x.via, hops: f.current!.hops, blocks: 0 };
+                stats.sources.push(src);
+              }
+              this.radio.sendDirect(x.peer, encodeMessage({ t: 'block-req', root: x.root, cids: x.cids }), x.via);
+              if (timer !== undefined) this.sched.clearTimeout(timer);
+              timer = this.sched.setTimeout(() => run(f.tick(this.sched.now())), Math.max(0, x.deadline - this.sched.now()));
+              break;
+            }
+            case 'stored': {
+              this.blocks.set(x.cid.toString(), x.bytes);
+              if (!this.sites.has(k)) this.sites.set(k, { root, sizeBytes: 0, blockCount: 0, complete: false });
+              const site = this.sites.get(k)!;
+              site.sizeBytes += x.bytes.length;
+              site.blockCount++;
+              stats.blocks++;
+              stats.bytes += x.bytes.length;
+              if (src) src.blocks++;
+              this.emit({ kind: 'progress', node: this.radio.name, root: k, blocks: stats.blocks, bytes: stats.bytes, expectedBlocks: f.current?.blockCount });
+              break;
+            }
+            case 'blame':
+              stats.corruptRejected++;
+              this.flag(x.peer);
+              this.log(`REJECTED block from ${x.peer.slice(0, 4)}: ${x.reason}; trying another peer`);
+              break;
+            case 'next':
+              bad.add(x.from);
+              this.log(`${x.from.slice(0, 4)}: ${x.reason}`);
+              break;
+            case 'done': {
+              const site = this.sites.get(k);
+              if (site) {
+                site.sizeBytes = x.totalBytes;
+                site.blockCount = x.blockCount;
+              } else this.sites.set(k, { root, sizeBytes: x.totalBytes, blockCount: x.blockCount, complete: false });
+              finish(true);
+              return;
+            }
+            case 'failed':
+              this.log(`fetch failed: ${x.reason}`);
+              finish(false);
+              return;
+          }
         }
-        const err = checkBlock(cid, bytes);
-        if (err) {
-          stats.corruptRejected++;
-          this.flag(peer);
-          this.log(`REJECTED block from ${peer.slice(0, 4)}: ${err.replace(/^\S+: /, '')}; trying another peer`);
-          failed = true;
-          continue;
-        }
-        this.blocks.set(cid.toString(), bytes);
-        stats.blocks++;
-        stats.bytes += bytes.length;
-        src.blocks++;
-        this.emit({ kind: 'progress', node: this.radio.name, root: k, blocks: stats.blocks, bytes: stats.bytes, expectedBlocks });
-      }
-      this.sched.clearTimeout(timer);
-      for (const c of batch) waiting.delete(c.toString());
-      if (failed) return false;
-    }
+      };
+      const driver = (peer: string, cid: CID, bytes: Uint8Array | null) =>
+        run(bytes ? f.onBlock(peer, cid, bytes, this.sched.now()) : f.onBlockNone(peer, cid, this.sched.now()));
+      this.drivers.add(driver);
+      run(f.start(this.sched.now()));
+    });
   }
 }

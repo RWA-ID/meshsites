@@ -5,3 +5,4 @@ export * from './car.ts';
 export * from './resolve.ts';
 export * from './wire.ts';
 export * from './gossip.ts';
+export * from './fetch.ts';
