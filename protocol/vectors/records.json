@@ -314,6 +314,29 @@
       }
     },
     {
+      "id": "unrecoverable-r",
+      "why": "r = 5 is not the x-coordinate of any curve point: recovery fails and must be a clean rejection, not a crash",
+      "input": {
+        "record": {
+          "v": 1,
+          "name": "example.eth",
+          "cid": "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy",
+          "origCid": "QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe",
+          "seq": 12,
+          "ts": 1762470000,
+          "signer": "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"
+        },
+        "sig": "0x000000000000000000000000000000000000000000000000000000000000000500000000000000000000000000000000000000000000000000000000000000011b"
+      },
+      "options": {
+        "now": 1762470060
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad-signature"
+      }
+    },
+    {
       "id": "future-ts",
       "why": "ts more than 300s ahead of now",
       "input": {

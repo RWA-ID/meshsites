@@ -172,6 +172,13 @@ function recordVectors(rootCid: string, origCid: string) {
     { id: 'wrong-signer', why: 'a valid record from a key that is not trusted for the name', input: signRecord({ ...base, signer: signer2 }, key2), options: { expectedSigner: signer1, now }, expect: { ok: false, reason: 'not-authorized' } },
     { id: 'claimed-signer', why: 'record names signer1 but key2 signed it', input: { record: base, sig: signRecord({ ...base, signer: signer2 }, key2).sig }, options: { now }, expect: { ok: false, reason: 'signer-mismatch' } },
     { id: 'high-s', why: 'malleated (high-s) twin of a valid signature', input: { record: base, sig: `0x${bytesToHex(highS)}` }, options: { now }, expect: { ok: false, reason: 'bad-signature' } },
+    {
+      id: 'unrecoverable-r',
+      why: 'r = 5 is not the x-coordinate of any curve point: recovery fails and must be a clean rejection, not a crash',
+      input: { record: base, sig: `0x${'5'.padStart(64, '0')}${'1'.padStart(64, '0')}1b` },
+      options: { now },
+      expect: { ok: false, reason: 'bad-signature' },
+    },
     { id: 'future-ts', why: `ts more than ${LIMITS.maxFutureSkewSec}s ahead of now`, input: good, options: { now: base.ts - LIMITS.maxFutureSkewSec - 1 }, expect: { ok: false, reason: 'future-ts' } },
     { id: 'uppercase-signer', why: 'signer must be lowercase hex', input: withRecord({ ...base, signer: signer1.toUpperCase().replace('0X', '0x') }), options: { now }, expect: { ok: false, reason: 'malformed' } },
     { id: 'extra-key', why: 'unknown key in a v1 record', input: withRecord({ ...base, extra: 1 }), options: { now }, expect: { ok: false, reason: 'malformed' } },
