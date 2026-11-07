@@ -2123,15 +2123,16 @@ final class BLEService: NSObject {
         let directPeripheralState = snapshotDirectPeripheralState(for: recipientPeerID)
         let recipientCentral = snapshotSubscribedCentrals().central(for: recipientPeerID)
 
-        if let peripheralMaxLen = directPeripheralState?.peripheral.maximumWriteValueLength(for: .withoutResponse),
-           data.count > peripheralMaxLen {
-            let chunk = BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: peripheralMaxLen)
-            sendFragmentedPacket(packet, pad: pad, maxChunk: chunk, directedOnlyPeer: recipientPeerID)
-            return
-        }
-        if let centralMaxLen = recipientCentral?.maximumUpdateValueLength,
-           data.count > centralMaxLen {
-            let chunk = BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: centralMaxLen)
+        // MeshSites fork patch 8: patch 8 may move any fragment to the notify link, so
+        // fragments must fit BOTH links (the two connections can negotiate different limits).
+        let peripheralMaxLen = directPeripheralState?.peripheral.maximumWriteValueLength(for: .withoutResponse)
+        let centralMaxLen = recipientCentral?.maximumUpdateValueLength
+        if let linkLimit = [peripheralMaxLen, centralMaxLen].compactMap({ $0 }).min(),
+           data.count > linkLimit {
+            // Headroom for the source route broadcastPacket adds to each fragment (count byte +
+            // 8 B per hop): bitchat's 42 B overhead omits it, so routed fragments came out
+            // 1 B over the link limit (measured 513 B on a 512 link) and stalled the write link.
+            let chunk = BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: linkLimit - Self.meshSitesRouteHeadroom)
             sendFragmentedPacket(packet, pad: pad, maxChunk: chunk, directedOnlyPeer: recipientPeerID)
             return
         }
@@ -2332,13 +2333,18 @@ final class BLEService: NSObject {
            !requireDirectPeerLink, !requireNoiseAuthenticatedPeerLink,
            selectedLinks.centralIDs.isEmpty, !selectedLinks.peripheralIDs.isEmpty,
            let central = subscribedCentrals.first(where: { centralSnapshot.peerIDsByCentralUUID[$0.identifier.uuidString] == peer }),
+           data.count <= central.maximumUpdateValueLength, // a notify longer than this is cut short
            packet.type == MessageType.fragment.rawValue
                || connectedStates.filter({ selectedLinks.peripheralIDs.contains($0.peripheral.identifier.uuidString) })
                    .allSatisfy({ meshSitesWriteLinkBackedUp($0.peripheral) }) {
             selectedLinks = BLEFanoutSelection(peripheralIDs: [], centralIDs: [central.identifier.uuidString])
         }
 
-        if let chunk = plan.fragmentChunkSize {
+        if var chunk = plan.fragmentChunkSize {
+            // MeshSites fork patch 8: fragments may be moved to the notify link; size them to fit it too.
+            if let fallback = directedNotifyFallback {
+                chunk = min(chunk, BLEOutboundPacketPolicy.fragmentChunkSize(forLinkLimit: fallback.maximumUpdateValueLength - Self.meshSitesRouteHeadroom))
+            }
             guard !selectedLinks.peripheralIDs.isEmpty || !selectedLinks.centralIDs.isEmpty else {
                 return false
             }
@@ -5101,7 +5107,8 @@ extension BLEService {
             let uuid = peripheral.identifier.uuidString
             if peripheral.canSendWriteWithoutResponse {
                 peripheral.writeValue(data, for: characteristic, type: .withoutResponse)
-            } else if let central = notifyFallback, let notifyCharacteristic = self.characteristic {
+            } else if let central = notifyFallback, let notifyCharacteristic = self.characteristic,
+                      data.count <= central.maximumUpdateValueLength { // a notify longer than this is cut short
                 // MeshSites fork patch 8: the write link is backed up right now, and a
                 // queued write may wait until the peer next transmits. Send this
                 // directed packet on the peer's notify link instead. Decided here, at
@@ -7245,6 +7252,9 @@ extension BLEService {
             }
         ))
     }
+
+    /// MeshSites fork patch 8: bytes kept free per fragment for a source route (1 + 8 per hop, 1 hop).
+    static let meshSitesRouteHeadroom = 16
 
     /// Fork patch 8: the write-without-response link to `peripheral` can't take
     /// more right now (iOS says so, or writes are already queued for it).

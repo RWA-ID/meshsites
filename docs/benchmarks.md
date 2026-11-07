@@ -36,9 +36,13 @@ Devices: iPhone 15 Pro Max (iOS 26.6, seeding) → iPhone XS (iOS 18.7.11, fetch
 |---|---|---|---|---|---|---|
 | m4-100k (103,230 B, 10 blocks) | BLE (Noise) | 1 | 7.8 | 4.8 | 21 | with fork patch 8; 3 s of the total is the fixed HAVE window |
 | m4-100k | BLE (Noise) | 1 | failed | - | - | **without** patch 8: fragments of the replies arrived 15-30 s late, fetch timed out at 1/10 blocks |
+| m4-100k | BLE (Noise), 290 B link | 1 | 9.3 | 6.2 | 17 | after the fragment-sizing fix + reply pacing (traced build); all fragments by notify |
+| m4-100k | BLE (Noise) | 1 | 9.2-9.5 | 6.1-6.4 | 16-17 | clean build, 3 passes in a row, fresh connections; 15 → XS twice, XS → 15 once (link size not logged) |
 | 2-3 hops | BLE | 2-3 | - | - | - | needs 3-4 devices (Hector, 2026-11-07: later) |
 | m4-1m | Wi-Fi bulk | 1 | - | - | - | M4c, not built yet |
 
 Batches: 1 block (root), then 2, then 7 (one 4 KiB + six 16 KiB). The six 16 KiB blocks took ~2.6 s in total, ~38 KB/s for that batch, faster than the simulator's 18 KB/s per hop. Likely reason (from the scheduler code, not measured): replies carry no transfer ID, so bitchat's 2-train concurrency limit doesn't apply and the six fragment trains run in parallel, each paced at 25 ms.
+
+Pacing (2 replies in flight) costs some speed on 512 B links (4.8 s before vs ~6 s now) but held on 290 B links, which failed every time before the fix.
 
 **Why patch 8 is needed:** the 15 Pro Max's central link to the XS stopped draining write-without-response after the first write; `canSendWriteWithoutResponse` stayed false and `peripheralIsReady` didn't fire until the XS transmitted something (its periodic announces), so queued fragments left 5-15 s apart. The XS's own central link to the 15 drained instantly. Patch 8 sends a directed packet on the peer's notify link when the chosen write link is backed up (decisions D13).

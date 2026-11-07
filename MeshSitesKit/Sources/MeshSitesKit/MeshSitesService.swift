@@ -206,7 +206,7 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
             switch v {
             case .reply(let messages):
                 appendLog("BLOCK_REQ from \(Self.short(p)): serving \(messages.filter { if case .block = $0 { return true }; return false }.count)/\(messages.count)")
-                for m in messages { if let b = try? Wire.encode(m) { t.sendDirect(Data(b), peer) } }
+                for m in messages { if let b = try? Wire.encode(m) { sendPaced(Data(b), to: peer, via: t) } }
             case .block(let cid, let bytes):
                 for (root, f) in fetchers { drive(root, f.onBlock(peer: p, cid: cid, bytes: bytes, now: now)) }
             case .blockNone(let cid):
@@ -215,6 +215,35 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
                 if spam || reason == "not-seeding" { appendLog("direct message from \(Self.short(p)) dropped: \(reason)") }
             }
             publish()
+        }
+    }
+
+    /// Replies to one peer go out at most `paceLanes` at a time, each lane held for the reply's
+    /// estimated airtime. bitchat starts every fragmented reply as its own train (one fragment per
+    /// 25 ms, no transfer ID, so its 2-train limit doesn't apply). Measured 2026-11-07 on a 290 B
+    /// link: even 2 trains keep bitchat's 128-entry notify retry queue busy (~75 re-queues/s), so 7
+    /// at once risk overflowing it. (The block loss itself was oversized fragments, fork patch 8.)
+    private static let paceLanes = 2
+    private static let paceChunkBytes = 232.0     // fragment chunk on a 290 B link (patch 8 headroom)
+    private static let paceFragmentSeconds = 0.025 // bitchat's directed fragment spacing
+    private static let paceMarginSeconds = 0.05
+    /// peer hex → when each lane is free again (seconds since `start`). Owned by `queue`.
+    private var paceLaneFree: [String: [TimeInterval]] = [:]
+
+    private func sendPaced(_ payload: Data, to peer: Data, via t: Transport) {
+        let key = peer.hex
+        let now = Date().timeIntervalSince(start)
+        var lanes = paceLaneFree[key] ?? Array(repeating: 0, count: Self.paceLanes)
+        let lane = lanes.indices.min { lanes[$0] < lanes[$1] }!
+        let sendAt = max(now, lanes[lane])
+        let fragments = (Double(payload.count) / Self.paceChunkBytes).rounded(.up)
+        lanes[lane] = sendAt + fragments * Self.paceFragmentSeconds + Self.paceMarginSeconds
+        paceLaneFree[key] = lanes
+        let delay = sendAt - now
+        if delay <= 0 { t.sendDirect(payload, peer); return }
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let t = self?.transport else { return }
+            t.sendDirect(payload, peer)
         }
     }
 
