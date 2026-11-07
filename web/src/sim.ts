@@ -3,6 +3,7 @@
  * in-memory with BLE-like shaping. Shows packets moving hop by hop and the
  * timing of a fetch.
  */
+import { esc } from './esc.ts';
 import { orderedBlocks, writeCar, type SignedNameRecord } from '@meshsites/protocol';
 import { CID } from 'multiformats/cid';
 import { RealScheduler, SimWorld, type RadioEvent, type NodeEvent, type OpenResult } from '@meshsites/protocol/mesh';
@@ -301,7 +302,7 @@ async function run() {
     view.removeAttribute('hidden');
   } catch (e) {
     log(`${sc.opener}: ${(e as Error).message}`, 'bad');
-    $('result').innerHTML = `<p class="badge bad">Failed</p><p>${(e as Error).message}</p>`;
+    $('result').innerHTML = `<p class="badge bad">Failed</p><p>${esc((e as Error).message)}</p>`;
   } finally {
     btn.disabled = false;
   }
@@ -323,7 +324,7 @@ function showResult(r: OpenResult, ms: number, world: SimWorld) {
     ['From', s.sources.map((x) => `${world.byPeer(x.peer)?.name} (${x.hops} hop${x.hops > 1 ? 's' : ''}, ${x.via === 'bulk' ? 'Wi-Fi' : 'BLE'}, ${x.blocks} blocks)`).join(' → ') || '-'],
     ['Rejected blocks', String(s.corruptRejected)],
   ];
-  $('result').innerHTML = `${badge}<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+  $('result').innerHTML = `${badge}<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
   log(`done: ${r.status} in ${(ms / 1000).toFixed(2)} s`, 'good');
 }
 

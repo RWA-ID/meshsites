@@ -249,7 +249,8 @@ export class MeshSitesNode implements RadioApp, BlockSource {
     switch (m.t) {
       case 'announce': {
         const last = this.lastAnnounceFrom.get(p.sender);
-        if (last !== undefined && now - last < this.opts.announceIntervalMs * 0.9) return stop('announce rate limit', true);
+        // Half the interval: tolerates delivery jitter and throttled timers, still stops a flood.
+        if (last !== undefined && now - last < this.opts.announceIntervalMs * 0.5) return stop('announce rate limit', true);
         this.lastAnnounceFrom.set(p.sender, now);
         const hops = TTL.announce - p.ttl + 1;
         for (const s of m.sites) {

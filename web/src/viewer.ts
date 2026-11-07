@@ -3,6 +3,7 @@
  * worker at /site/<cid>/. Includes the explicit "no network" probe (M2's
  * requirement, mirrored here for the web testbed).
  */
+import { esc } from './esc.ts';
 import { buildSiteCar, verifyCar } from '@meshsites/protocol';
 import { deleteCar, getCar, listCars, putCar } from './store.ts';
 
@@ -128,10 +129,22 @@ const tryImg = (id, what, url, expect) => new Promise((res) => {
   try { const ws = new WebSocket('wss://example.com/'); await new Promise((r) => { ws.onerror = r; ws.onopen = r; setTimeout(r, 3000); });
         add('ws', 'WebSocket to wss://example.com', 'blocked', ws.readyState === 1 ? 'allowed' : 'blocked'); }
   catch (e) { add('ws', 'WebSocket to wss://example.com', 'blocked', 'blocked', String(e.message || e)); }
-  let beacon; try { beacon = navigator.sendBeacon('https://example.com/b', 'x'); } catch (e) { beacon = false; }
-  add('beacon', 'navigator.sendBeacon to example.com', 'blocked', beacon ? 'allowed' : 'blocked', 'returned ' + beacon);
+  // sendBeacon() returns true when it QUEUES the beacon; CSP blocks the send
+  // afterwards. The evidence is a securitypolicyviolation event for that URL.
+  {
+    const url = 'https://example.com/beacon-probe';
+    const violated = new Promise((r) => {
+      const on = (ev) => { if (String(ev.blockedURI).startsWith('https://example.com')) { document.removeEventListener('securitypolicyviolation', on); r(ev.effectiveDirective); } };
+      document.addEventListener('securitypolicyviolation', on);
+      setTimeout(() => r(null), 2000);
+    });
+    let queued; try { queued = navigator.sendBeacon(url, 'x'); } catch (e) { queued = false; }
+    const directive = await violated;
+    add('beacon', 'navigator.sendBeacon to example.com', 'blocked', !queued || directive ? 'blocked' : 'allowed',
+        directive ? 'CSP violation: ' + directive + ' (sendBeacon returned ' + queued + ')' : 'no CSP violation seen; returned ' + queued);
+  }
   add('webrtc', 'RTCPeerConnection exists', 'blocked', typeof RTCPeerConnection === 'function' ? 'gap' : 'blocked',
-      'CSP cannot block WebRTC; the iOS app has no such API in WKWebView content');
+      'CSP cannot block WebRTC. WKWebView also has it (iOS 14.3+), so M2 must disable or block it explicitly');
   parent.postMessage({ meshsitesProbe: results }, '*');
 })();
 `;
@@ -158,15 +171,32 @@ async function runProbe() {
   await deleteCar(root);
   refreshList();
   const pass = (r: ProbeResult) => r.got === r.expect;
-  const rows = results
-    .map((r) => {
-      const cls = r.got === 'gap' ? 'warn' : pass(r) ? 'ok' : 'bad';
-      const label = r.got === 'gap' ? 'known gap' : pass(r) ? 'pass' : 'FAIL';
-      return `<div class="peer"><div><div>${r.what}</div><div class="mono muted">expect ${r.expect}, got ${r.got}${r.detail ? ` · ${r.detail.slice(0, 80)}` : ''}</div></div><span class="badge ${cls}">${label}</span></div>`;
-    })
-    .join('');
   const failures = results.filter((r) => r.got !== 'gap' && !pass(r)).length;
-  $('probe-out').innerHTML = `<p class="badge ${failures ? 'bad' : 'ok'}">${failures ? `${failures} check(s) failed` : 'All network checks behave as expected'}</p><div class="peers">${rows}</div>`;
+  // Results come from the probe site: render as text only, never as HTML.
+  const out = $('probe-out');
+  out.replaceChildren();
+  const summary = document.createElement('p');
+  summary.className = `badge ${failures ? 'bad' : 'ok'}`;
+  summary.textContent = failures ? `${failures} check(s) failed` : 'All network checks behave as expected';
+  const list = document.createElement('div');
+  list.className = 'peers';
+  for (const r of results) {
+    const row = document.createElement('div');
+    row.className = 'peer';
+    const text = document.createElement('div');
+    const what = document.createElement('div');
+    what.textContent = String(r.what);
+    const detail = document.createElement('div');
+    detail.className = 'mono muted';
+    detail.textContent = `expect ${r.expect}, got ${r.got}${r.detail ? ` · ${String(r.detail).slice(0, 120)}` : ''}`;
+    text.append(what, detail);
+    const badge = document.createElement('span');
+    badge.className = `badge ${r.got === 'gap' ? 'warn' : pass(r) ? 'ok' : 'bad'}`;
+    badge.textContent = r.got === 'gap' ? 'known gap' : pass(r) ? 'pass' : 'FAIL';
+    row.append(text, badge);
+    list.append(row);
+  }
+  out.append(summary, list);
   (window as unknown as { probeResults: ProbeResult[] }).probeResults = results;
 }
 
@@ -174,7 +204,7 @@ async function main() {
   try {
     await registerSw();
   } catch (e) {
-    $('site-head').innerHTML = `<p class="badge bad">${(e as Error).message}</p>`;
+    $('site-head').innerHTML = `<p class="badge bad">${esc((e as Error).message)}</p>`;
     return;
   }
   $('file').onchange = (e) => {

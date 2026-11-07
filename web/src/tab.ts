@@ -5,6 +5,7 @@
  * loss, relay jitter, TTL) is imposed in software on top of each channel.
  * No ICE servers are configured: links use local host candidates only.
  */
+import { esc } from './esc.ts';
 import { CID } from 'multiformats/cid';
 import { orderedBlocks, writeCar, type SignedNameRecord } from '@meshsites/protocol';
 import {
@@ -217,7 +218,7 @@ function connectSignalling() {
 function renderPeers() {
   const box = $('peers');
   box.replaceChildren();
-  if (!peers.size) box.innerHTML = `<p class="muted">No other tabs in room “${room}” yet. Open this page in another tab or device.</p>`;
+  if (!peers.size) box.innerHTML = `<p class="muted">No other tabs in room “${esc(room)}” yet. Open this page in another tab or device.</p>`;
   for (const p of peers.values()) {
     const row = document.createElement('div');
     row.className = 'peer';
@@ -255,7 +256,7 @@ function renderPeers() {
 function renderState() {
   const sites = [...node.sites.values()].filter((s) => s.complete);
   const names = [...node.names.entries()];
-  $('state').innerHTML = `<dl><dt>Peer ID</dt><dd class="mono">${myId}</dd><dt>Sites</dt><dd class="mono">${sites.map((s) => `${s.root.toString().slice(0, 16)}… (${s.blockCount} blocks)`).join('<br>') || '-'}</dd><dt>Names</dt><dd>${names.map(([n, r]) => `${n} (${r.status})`).join(', ') || '-'}</dd><dt>Trusted signers</dt><dd>${[...node.signers.keys()].join(', ') || '-'}</dd></dl>`;
+  $('state').innerHTML = `<dl><dt>Peer ID</dt><dd class="mono">${esc(myId)}</dd><dt>Sites</dt><dd class="mono">${sites.map((s) => esc(`${s.root.toString().slice(0, 16)}… (${s.blockCount} blocks)`)).join('<br>') || '-'}</dd><dt>Names</dt><dd>${esc(names.map(([n, r]) => `${n} (${r.status})`).join(', ') || '-')}</dd><dt>Trusted signers</dt><dd>${esc([...node.signers.keys()].join(', ') || '-')}</dd></dl>`;
 }
 
 let records: { cases: { id: string; input: SignedNameRecord }[]; testKeys: { address: string }[] };
@@ -286,7 +287,7 @@ async function open() {
     const r = await node.open(target);
     const s = r.stats;
     const badge = r.status === 'verified' ? '<span class="badge ok">Verified name</span>' : r.status === 'unverified' ? '<span class="badge warn">Unverified name</span>' : '<span class="badge neutral">Raw CID</span>';
-    $('result').innerHTML = `${badge}<dl><dt>Total</dt><dd>${s.local ? 'already local' : `${(s.ms / 1000).toFixed(2)} s`}</dd><dt>From</dt><dd>${s.sources.map((x) => `${nameOf(x.peer)} (${x.hops} hop${x.hops > 1 ? 's' : ''}, ${x.via === 'bulk' ? 'Wi-Fi' : 'BLE'})`).join(' → ') || '-'}</dd><dt>Blocks</dt><dd>${s.blocks} · ${(s.bytes / 1024).toFixed(1)} KiB</dd><dt>Rejected</dt><dd>${s.corruptRejected}</dd></dl>`;
+    $('result').innerHTML = `${badge}<dl><dt>Total</dt><dd>${s.local ? 'already local' : `${(s.ms / 1000).toFixed(2)} s`}</dd><dt>From</dt><dd>${esc(s.sources.map((x) => `${nameOf(x.peer)} (${x.hops} hop${x.hops > 1 ? 's' : ''}, ${x.via === 'bulk' ? 'Wi-Fi' : 'BLE'})`).join(' → ') || '-')}</dd><dt>Blocks</dt><dd>${s.blocks} · ${(s.bytes / 1024).toFixed(1)} KiB</dd><dt>Rejected</dt><dd>${s.corruptRejected}</dd></dl>`;
     const root = CID.parse(r.root);
     await putCar({ root: r.root, car: await writeCar([root], orderedBlocks(root, node)), label: r.name ?? 'site', savedAt: Date.now() });
     const a = document.createElement('a');
