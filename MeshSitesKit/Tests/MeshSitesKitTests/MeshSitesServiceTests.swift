@@ -147,6 +147,88 @@ final class MeshSitesServiceTests: XCTestCase {
         XCTAssertEqual(b.downloads[root]?.error, "nobody nearby has it")
     }
 
+    // MARK: address bar (D14)
+
+    /// records.json "valid-verified": example.eth → site-basic.car's root, signed by test key 1.
+    static let exampleRecord = #"{"record":{"v":1,"name":"example.eth","cid":"bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy","origCid":"QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe","seq":12,"ts":1762470000,"signer":"0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df"},"sig":"0xdd0f0797a8b2dba059abcc44de32055183b86fcbda7d24717c6a7c7a79d4c5b75391520e4ef4c8980ebe5a36194a70a0096b4e4e330ba2a6c79ed7e1847fb9bb1b"}"#
+    static let exampleRoot = "bafybeib5gg45er6y7rgo2hgisx7bj4issekvfyhu52k3em52a2bb2khvxy"
+
+    func testAddressBarOpensAStoredSiteWithoutTheMesh() throws {
+        let link = Link()
+        let a = try makeNode("a1a1a1a1a1a1a1a1", link: link, seeding: false, sites: ["site-basic.car"])
+        waitFor("attached") { a.attached }
+        a.open("ipfs://\(Self.exampleRoot)/index.html")
+        waitFor("ready") { a.lookup?.phase == .ready }
+        XCTAssertEqual(a.lookup?.root, Self.exampleRoot)
+        XCTAssertEqual(a.lookup?.path, "/index.html")
+        XCTAssertFalse(a.log.contains { $0.contains("WANT") }, "a stored site must not be asked for")
+    }
+
+    func testAddressBarDownloadsByGatewayLink() throws {
+        let link = Link()
+        _ = try makeNode("a1a1a1a1a1a1a1a1", link: link, seeding: true, sites: ["site-basic.car"])
+        let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)
+        waitFor("attached") { b.attached }
+        b.open("https://\(Self.exampleRoot).ipfs.dweb.link/")
+        waitFor("B ready", timeout: 15) { b.lookup?.phase == .ready }
+        XCTAssertTrue(b.store.sites.contains { $0.root == Self.exampleRoot })
+    }
+
+    func testAddressBarResolvesANameOverTheMesh() throws {
+        let link = Link()
+        let a = try makeNode("a1a1a1a1a1a1a1a1", link: link, seeding: true, sites: ["site-basic.car"])
+        let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)
+        waitFor("attached") { a.attached && b.attached }
+        var added: Result<String, Error>?
+        a.addNameRecord(Self.exampleRecord) { added = $0 }
+        waitFor("A holds the record") { added != nil }
+        XCTAssertEqual(try added?.get(), "unverified")
+        b.open("https://example.eth.limo/index.html")
+        waitFor("B ready", timeout: 15) { b.lookup?.phase == .ready }
+        XCTAssertEqual(b.lookup?.name, "example.eth")
+        XCTAssertEqual(b.lookup?.path, "/index.html")
+        let site = try XCTUnwrap(b.store.sites.first { $0.root == Self.exampleRoot })
+        XCTAssertEqual(site.name, "example.eth")
+        XCTAssertEqual(site.nameStatus, "unverified", "nobody told B who may sign example.eth")
+        // Now B holds the record too: the original (gateway) CID maps to the mesh CID.
+        b.clearLookup()
+        waitFor("cleared") { b.lookup == nil }
+        b.open("ipfs://QmQvsUW5SBQ83mueVKcQK7q8ME26opJQGWah9ZbUgJTDSe")
+        waitFor("B ready again") { b.lookup?.phase == .ready }
+        XCTAssertEqual(b.lookup?.root, Self.exampleRoot)
+    }
+
+    func testAddressBarUnknownNameFails() throws {
+        let link = Link()
+        let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)
+        waitFor("attached") { b.attached }
+        b.open("nobody-has-this.eth")
+        waitFor("gives up", timeout: 8) { if case .failed = b.lookup?.phase { return true }; return false }
+        XCTAssertEqual(b.lookup?.phase, .failed("Nobody nearby has a signed record for nobody-has-this.eth."))
+    }
+
+    func testBuiltInAnchorResolvesMeshsitesEthAsVerified() throws {
+        let link = Link()
+        let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)
+        waitFor("attached") { b.attached }
+        b.open("meshsites.eth")
+        // No one holds the site here, but the name resolved offline from the built-in record.
+        waitFor("download gives up", timeout: 8) { if case .failed = b.lookup?.phase { return true }; return false }
+        XCTAssertEqual(b.lookup?.root, "bafybeid4yps7awrai7spe7wdnz6d5lvsgs2fa62xc3c2blsavaafryhj7u")
+        XCTAssertFalse(b.log.contains { $0.contains("WANT name") }, "resolved locally, no name lookup sent")
+        var status: Result<String, Error>?
+        b.addNameRecord(MeshSitesService.anchorRecord) { status = $0 }
+        waitFor("re-add") { status != nil }
+        XCTAssertThrowsError(try status?.get(), "same record again is a duplicate (already held, as verified)")
+    }
+
+    func testAddressBarRejectsGarbage() {
+        let svc = MeshSitesService(store: SiteStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+        svc.open("javascript:alert(1)")
+        waitFor("failed") { svc.lookup != nil }
+        if case .failed = svc.lookup?.phase {} else { XCTFail("expected failure, got \(String(describing: svc.lookup))") }
+    }
+
     func testUnattachedServiceBehavesLikeAnUnpatchedNode() {
         let svc = MeshSitesService(store: SiteStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
         XCTAssertTrue(svc.receive(payload: Data([0x01]), sender: Data(count: 8), recipient: nil, ttl: 9, authenticated: false))

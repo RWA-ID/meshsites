@@ -17,6 +17,8 @@ public struct MeshSitesView: View {
     @State private var openSite: StoredSite?
     @State private var showProbe = false
     @State private var showMesh = false
+    @State private var address = ""
+    @State private var openPath = "/"
 
     public init(store: SiteStore = .shared, mesh: MeshSitesService = .shared) {
         self.store = store
@@ -27,6 +29,27 @@ public struct MeshSitesView: View {
         NavigationStack {
             List {
                 Section {
+                    HStack {
+                        TextField("meshsites.eth or ipfs://…", text: $address)
+                            .font(.body.monospaced())
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
+                            #endif
+                            .submitLabel(.go)
+                            .onSubmit(go)
+                        Button("Go", action: go)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty || mesh.lookup.map(\.isBusy) == true)
+                    }
+                    if let l = mesh.lookup { LookupLine(lookup: l, download: l.root.flatMap { mesh.downloads[$0] }) }
+                } header: {
+                    Text("Open a site")
+                } footer: {
+                    Text("A name, a CID, an ipfs:// link or a gateway link. Opens a stored copy, or asks nearby devices for it over the mesh (they can see which site you asked for). Never uses the internet.")
+                }
+                Section {
                     Text("Websites stored on this device. They open with no internet, and every block was checked against its content hash.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -36,8 +59,12 @@ public struct MeshSitesView: View {
                         Text("No sites yet. Import a .car file (Files or AirDrop).").foregroundStyle(.secondary)
                     }
                     ForEach(store.sites) { site in
-                        Button { openSite = site } label: { SiteRow(site: site) }
+                        Button { openPath = "/"; openSite = site } label: { SiteRow(site: site) }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button { Clipboard.copy(site.shareAddress) } label: { Label("Copy address", systemImage: "doc.on.doc") }
+                                Button { Clipboard.copy(site.root) } label: { Label("Copy CID", systemImage: "number") }
+                            }
                     }
                     .onDelete { idx in idx.map { store.sites[$0].root }.forEach(store.delete) }
                     Button { importing = true } label: { Label("Import a .car file", systemImage: "square.and.arrow.down") }
@@ -75,10 +102,75 @@ public struct MeshSitesView: View {
                     message = error.localizedDescription
                 }
             }
-            .sheet(item: $openSite) { site in SiteBrowserView(site: site, store: store) }
+            .sheet(item: $openSite) { site in SiteBrowserView(site: site, store: store, path: openPath) }
+            .onChange(of: mesh.lookup) { l in openIfReady(l) }
+            .onChange(of: store.sites) { _ in openIfReady(mesh.lookup) }
             .sheet(isPresented: $showProbe) { ProbeView(store: store) }
             .sheet(isPresented: $showMesh) { MeshActivityView(mesh: mesh) }
         }
+    }
+}
+
+extension MeshSitesView {
+    private func go() {
+        let text = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        mesh.open(text)
+    }
+
+    /// A lookup that reached `.ready` opens its site once the store has it, then clears.
+    private func openIfReady(_ l: MeshSitesService.Lookup?) {
+        guard let l, l.phase == .ready, let root = l.root,
+              let site = store.sites.first(where: { $0.root == root }) else { return }
+        openPath = l.path
+        openSite = site
+        mesh.clearLookup()
+    }
+}
+
+extension StoredSite {
+    /// What to paste into another device's address bar (or a chat): the name when the site has one,
+    /// otherwise an ipfs:// link to its mesh CID.
+    var shareAddress: String { name ?? "ipfs://\(root)" }
+}
+
+enum Clipboard {
+    static func copy(_ text: String) {
+        #if os(iOS)
+        UIPasteboard.general.string = text
+        #else
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
+    }
+}
+
+extension MeshSitesService.Lookup {
+    var isBusy: Bool { phase == .resolvingName || phase == .findingSite }
+}
+
+struct LookupLine: View {
+    let lookup: MeshSitesService.Lookup
+    let download: MeshSitesService.Download?
+
+    var body: some View {
+        Group {
+            switch lookup.phase {
+            case .resolvingName:
+                HStack { ProgressView(); Text("Asking nearby devices for \(lookup.name ?? "the name")…") }
+            case .findingSite:
+                if let download, download.phase == .downloading || download.phase == .done {
+                    DownloadLine(d: download)
+                } else {
+                    HStack { ProgressView(); Text("Looking for the site nearby…") }
+                }
+            case .ready:
+                Text("Opening…")
+            case .failed(let why):
+                Text(why).foregroundStyle(.red)
+            }
+        }
+        .font(.footnote)
     }
 }
 
@@ -119,8 +211,10 @@ struct NameBadge: View {
 struct SiteBrowserView: View {
     let site: StoredSite
     @ObservedObject var store: SiteStore
+    var path = "/"
     @Environment(\.dismiss) private var dismiss
     @State private var blocked: [URL] = []
+    @State private var copied = false
 
     var body: some View {
         NavigationStack {
@@ -141,13 +235,26 @@ struct SiteBrowserView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 Divider()
-                SiteWebView(root: site.root, store: store) { blocked.append($0) }
+                SiteWebView(root: site.root, path: path, store: store) { blocked.append($0) }
             }
             .navigationTitle(site.name ?? site.label)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        Clipboard.copy(site.shareAddress)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                    } label: {
+                        Label(copied ? "Copied" : "Copy address", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .accessibilityHint(site.shareAddress)
+                }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
         }
         #if os(macOS)
         .frame(minWidth: 640, minHeight: 600)
@@ -206,6 +313,7 @@ typealias PlatformViewRepresentable = NSViewRepresentable
 /// SwiftUI wrapper around the locked-down WKWebView.
 struct SiteWebView: View {
     let root: String
+    var path = "/"
     @ObservedObject var store: SiteStore
     var onBlocked: (URL) -> Void
     @State private var config: WKWebViewConfiguration?
@@ -214,7 +322,7 @@ struct SiteWebView: View {
     var body: some View {
         Group {
             if let config {
-                WebViewHost(root: root, config: config, onBlocked: onBlocked)
+                WebViewHost(root: root, path: path, config: config, onBlocked: onBlocked)
             } else if let error {
                 Text(error).foregroundStyle(.red).padding()
             } else {
@@ -230,6 +338,7 @@ struct SiteWebView: View {
 
 struct WebViewHost: PlatformViewRepresentable {
     let root: String
+    var path = "/"
     let config: WKWebViewConfiguration
     let onBlocked: (URL) -> Void
 
@@ -242,7 +351,8 @@ struct WebViewHost: PlatformViewRepresentable {
     func makeWebView(_ context: Context) -> WKWebView {
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = context.coordinator
-        wv.load(URLRequest(url: URL(string: "\(MeshSiteSchemeHandler.scheme)://\(root)/")!))
+        let base = "\(MeshSiteSchemeHandler.scheme)://\(root)"
+        wv.load(URLRequest(url: URL(string: base + path) ?? URL(string: base + "/")!))
         return wv
     }
 

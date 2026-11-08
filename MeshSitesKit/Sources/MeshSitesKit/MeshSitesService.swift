@@ -84,6 +84,18 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
     @Published public private(set) var log: [String] = []
     @Published public private(set) var spamStrikes = 0
     @Published public private(set) var downloads: [String: Download] = [:]
+    /// The address bar's current lookup (D14).
+    @Published public private(set) var lookup: Lookup?
+
+    /// One address typed into the address bar, from parsing to "ready to open".
+    public struct Lookup: Equatable {
+        public enum Phase: Equatable { case resolvingName, findingSite, ready, failed(String) }
+        public let input: String
+        public var phase: Phase
+        public var name: String?
+        public var root: String?
+        public var path = "/"
+    }
 
     public let store: SiteStore
     private let queue = DispatchQueue(label: "meshsites.service")
@@ -97,6 +109,8 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
     private var fetchers: [String: Fetcher] = [:]
     private var fetchTimers: [String: DispatchSourceTimer] = [:]
     private var fetchStarted: [String: Date] = [:]
+    /// root → ENS name (and status) to store a downloaded site under. Owned by `queue`.
+    private var downloadNames: [String: (name: String, status: String?)] = [:]
     /// Recently served sites (root → blocks), so a batch doesn't re-read the CAR per request.
     private var sourceCache: [(root: String, blocks: DictBlockSource)] = []
     private var storeSink: AnyCancellable?
@@ -114,6 +128,7 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
         cfg.seeding = seeding
         cfg.bulkCapable = false // peer-to-peer Wi-Fi arrives in M4
         gossip = Gossip(selfID: "", config: cfg)
+        Self.addTrustAnchors(&gossip)
         var scfg = BlockServer.Config()
         scfg.seeding = seeding
         server = BlockServer(config: scfg)
@@ -247,11 +262,131 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
         }
     }
 
+    // MARK: address bar (D14)
+
+    /// meshsites.eth's signed record and signer, as published on ENS (text records
+    /// `meshsites.record` / `meshsites.signer`, read 2026-11-07). A built-in trust anchor like the
+    /// probe site: every copy of the app resolves meshsites.eth offline as Verified and can answer
+    /// nearby name lookups for it. Update after every re-pin of meshsites.eth.
+    static let anchorName = "meshsites.eth"
+    static let anchorSigner = "0x8e0783451d07ba750f201ae9bf6d93385e6da410"
+    static let anchorRecord = #"{"record":{"v":1,"name":"meshsites.eth","cid":"bafybeid4yps7awrai7spe7wdnz6d5lvsgs2fa62xc3c2blsavaafryhj7u","origCid":"bafybeiczn2z73stly5coqera6owcr5wjmfv57gcvd4fl62dkpjg4epgxy4","seq":1794014229,"ts":1794014229,"signer":"0x8e0783451d07ba750f201ae9bf6d93385e6da410"},"sig":"0x8e50b6ad032cd1fbc99bf539512c376bfc65727e899a9a71cc0009ada38fd4b62653a0782669ee4663fe9adcc03fc8fec429a8a53658e5e5f5c60e46940137e71b"}"#
+
+    static func addTrustAnchors(_ g: inout Gossip) {
+        g.trust(name: anchorName, signer: anchorSigner)
+        _ = try? g.addRecord(anchorRecord, nowSec: Int64(Date().timeIntervalSince1970))
+    }
+
+    private static let nameWait: TimeInterval = 3
+
+    /// Open whatever was typed: a stored copy right away, otherwise resolve the name over the mesh
+    /// (WANT by name → a signed NAME_RECORD), find the site (WANT by CID) and download it.
+    /// Never touches the internet. `lookup` tracks progress; `.ready` means stored and openable.
+    public func open(_ input: String) {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let address = SiteAddress.parse(text) else {
+            setLookup(Lookup(input: text, phase: .failed("Not a site address. Try a name like meshsites.eth or an ipfs:// link.")))
+            return
+        }
+        queue.async { [self] in
+            switch address {
+            case .cid(let cid, let path):
+                openRoot(meshRoot(for: cid.description), name: nil, status: nil, path: path, input: text)
+            case .name(let name, let path):
+                if let n = gossip.names[name] {
+                    openRoot(n.root, name: name, status: n.status.rawValue, path: path, input: text)
+                } else if let site = storedSites.first(where: { $0.name == name }) {
+                    openRoot(site.root, name: name, status: site.nameStatus, path: path, input: text)
+                } else {
+                    resolveName(name, path: path, input: text)
+                }
+            }
+        }
+    }
+
+    public func clearLookup() { setLookup(nil) }
+
+    /// Hold a signed NAME_RECORD (from a publisher, or the gateway mode of M5) so this device
+    /// resolves the name and answers nearby lookups for it. `signer`, when known from ENS, marks it Verified.
+    /// Lost when bitchat's identity changes (panic wipe), like everything else the policy learned.
+    public func addNameRecord(_ signedText: String, signer: String? = nil, done: ((Result<String, Error>) -> Void)? = nil) {
+        queue.async { [self] in
+            do {
+                if let signer, let name = (try? JSON.parse(signedText))?["record"]?["name"]?.string { gossip.trust(name: name, signer: signer) }
+                let status = try gossip.addRecord(signedText, nowSec: Int64(Date().timeIntervalSince1970))
+                done?(.success(status.rawValue))
+            } catch {
+                done?(.failure(error))
+            }
+        }
+    }
+
+    /// A gateway link carries the site's original CID; the mesh knows it by the 16 KiB-chunk CID.
+    /// Map one to the other when a name record we hold says so.
+    private func meshRoot(for root: String) -> String {
+        gossip.names.values.first { n in
+            let record = (try? JSON.parse(n.signed))?["record"]
+            return (record.flatMap { try? Records.wellFormed($0) })?.origCid.description == root
+        }?.root ?? root
+    }
+
+    private func resolveName(_ name: String, path: String, input: String) {
+        guard transport != nil else {
+            setLookup(Lookup(input: input, phase: .failed("The mesh is not connected yet."), name: name, path: path))
+            return
+        }
+        setLookup(Lookup(input: input, phase: .resolvingName, name: name, path: path))
+        var reqId = Bytes(repeating: 0, count: 8)
+        for i in reqId.indices { reqId[i] = UInt8.random(in: 0...255) }
+        appendLog("WANT name \(name)")
+        send(Gossip.Outgoing(message: .want(reqId: reqId, origTtl: Wire.TTL.want, root: nil, name: name), ttl: Wire.TTL.want, recipient: nil))
+        pollName(name, path: path, input: input, until: Date().addingTimeInterval(Self.nameWait))
+    }
+
+    private func pollName(_ name: String, path: String, input: String, until: Date) {
+        if let n = gossip.names[name] {
+            openRoot(n.root, name: name, status: n.status.rawValue, path: path, input: input)
+        } else if Date() >= until {
+            setLookup(Lookup(input: input, phase: .failed("Nobody nearby has a signed record for \(name)."), name: name, path: path))
+        } else {
+            queue.asyncAfter(deadline: .now() + 0.25) { [self] in pollName(name, path: path, input: input, until: until) }
+        }
+    }
+
+    private func openRoot(_ root: String, name: String?, status: String?, path: String, input: String) {
+        let base = Lookup(input: input, phase: .findingSite, name: name, root: root, path: path)
+        if storedSites.contains(where: { $0.root == root }) {
+            var l = base; l.phase = .ready
+            setLookup(l)
+            return
+        }
+        guard transport != nil else {
+            var l = base; l.phase = .failed("Not stored here, and the mesh is not connected yet.")
+            setLookup(l)
+            return
+        }
+        setLookup(base)
+        download(root: root, name: name, nameStatus: status)
+    }
+
+    private func setLookup(_ l: Lookup?) {
+        DispatchQueue.main.async { self.lookup = l }
+    }
+
+    private func updateLookup(root: String, _ change: @escaping (inout Lookup) -> Void) {
+        DispatchQueue.main.async {
+            guard var l = self.lookup, l.root == root, l.phase == .findingSite else { return }
+            change(&l)
+            self.lookup = l
+        }
+    }
+
     /// Find holders of `root` (WANT, 3 s), then pull it block by block and store it.
-    public func download(root: String) {
+    public func download(root: String, name: String? = nil, nameStatus: String? = nil) {
         guard let cid = try? CID.parse(root) else { return }
         queue.async { [self] in
             guard transport != nil, fetchers[root] == nil else { return }
+            if let name { downloadNames[root] = (name, nameStatus) }
             setDownload(root, Download(phase: .asking))
             fetchStarted[root] = Date()
             haveCollect[root] = []
@@ -328,7 +463,8 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                _ = try self.store.importCar(car, label: "from mesh")
+                let named = self.queue.sync { self.downloadNames.removeValue(forKey: root) }
+                _ = try self.store.importCar(car, label: "from mesh", name: named?.name, nameStatus: named?.status)
                 self.queue.async { self.finishDownload(root, error: nil, seconds: seconds) }
             } catch {
                 self.queue.async { self.finishDownload(root, error: error.localizedDescription) }
@@ -342,7 +478,8 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
         fetchTimers[root] = nil
         let secs = seconds ?? fetchStarted[root].map { Date().timeIntervalSince($0) }
         fetchStarted[root] = nil
-        if let error { appendLog("download \(Self.short(root)) failed: \(error)") }
+        if let error { appendLog("download \(Self.short(root)) failed: \(error)"); downloadNames[root] = nil }
+        updateLookup(root: root) { $0.phase = error.map { .failed("Download failed: \($0)") } ?? .ready }
         updateDownload(root) { $0.phase = error == nil ? .done : .failed; $0.error = error; $0.seconds = secs }
     }
 
@@ -397,6 +534,7 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
     /// A fresh policy for a (new) identity: nothing learned under the old peer ID carries over.
     private func rebuildPolicy() {
         gossip = Gossip(selfID: transport?.selfID().hex ?? "", config: gossip.config)
+        Self.addTrustAnchors(&gossip)
         syncSites()
     }
 
