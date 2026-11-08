@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EXAMPLE · Local bulletin · Example Valley</title>
+<style>
+:root{--bg:#fff;--ink:#16181a;--muted:#5c6168;--line:#dcdcd6;--accent:#2f5fd0;--warn-bg:#fff3cd;--warn:#6b4a00}
+@media (prefers-color-scheme:dark){:root{--bg:#141517;--ink:#ececea;--muted:#a0a4aa;--line:#33363a;--accent:#7aa2ff;--warn-bg:#3a2a0f;--warn:#f0c070}}
+*{box-sizing:border-box}body{margin:0 auto;max-width:720px;padding:0 16px 40px;background:var(--bg);color:var(--ink);font:17px/1.6 Georgia,'Times New Roman',serif}
+.demo{background:var(--warn-bg);color:var(--warn);border:2px dashed currentColor;border-radius:8px;padding:10px 12px;margin:14px 0;font:700 15px/1.45 system-ui,sans-serif}
+header{border-bottom:3px double var(--ink);margin-bottom:10px}h1{font-size:30px;margin:6px 0 0}
+.muted,time{color:var(--muted);font:14px system-ui,sans-serif}nav{font:15px system-ui,sans-serif;margin:6px 0 10px}nav a{margin-right:14px}a{color:var(--accent)}
+article{border-bottom:1px solid var(--line);padding:12px 0}article h2{font-size:21px;margin:2px 0 6px}
+</style>
+</head>
+<body>
+<p class="demo">EXAMPLE: fictional news for testing MeshSites. Not real information.</p>
+<header>
+<h1>The Example Valley Bulletin</h1>
+<nav><a href="index.html">Latest</a><a href="rights.html">Staying safe offline</a></nav>
+</header>
+<p class="muted">Snapshot of 7 Nov 2026, 18:00. This page is a frozen copy: it does not update by itself. Look for a newer version if you can.</p>
+
+<article>
+<time>17:30</time>
+<h2>Power restored to the north side; south still dark</h2>
+<p>Crews restored power to about half of the north side this afternoon. The utility expects the south side back within two days. Charging stations remain open at the town hall and the library.</p>
+</article>
+
+<article>
+<time>15:10</time>
+<h2>Bridge on River Road closed until inspected</h2>
+<p>Engineers closed the River Road bridge after high water. Drivers should use the old highway. No timeline for reopening has been given.</p>
+</article>
+
+<article>
+<time>12:00</time>
+<h2>Schools stay closed tomorrow</h2>
+<p>All schools in the valley remain closed. Three are being used as shelters. Families can pick up lesson packets at the library.</p>
+</article>
+
+<article>
+<time>09:45</time>
+<h2>How to tell a real bulletin from a fake one</h2>
+<p>Rumours spread fast when networks are down. In MeshSites, a page opened by name shows <b>Verified</b> only when it is signed by the publisher's known key. If a page about an emergency shows <b>Unverified</b>, check it with someone you trust before acting on it.</p>
+</article>
+</body>
+</html>

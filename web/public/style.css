@@ -119,3 +119,24 @@ iframe.site { width: 100%; height: 70vh; border: 1px solid var(--line); border-r
 .peer { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
 .peer .who { font-weight: 600; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* About page (index.html): a readable single column. */
+body.doc { max-width: 760px; }
+body.doc main > section { margin: 0 0 30px; }
+body.doc h2 { font-size: 22px; margin: 0 0 10px; text-transform: none; letter-spacing: -0.01em; color: var(--ink); }
+body.doc h3 { font-size: 16px; margin: 18px 0 6px; }
+body.doc p, body.doc li { font-size: 16px; line-height: 1.6; }
+body.doc ul, body.doc ol { padding-left: 22px; }
+body.doc li + li { margin-top: 6px; }
+body.doc .hero { padding: 18px 0 6px; }
+body.doc .lede { font-size: 28px; line-height: 1.25; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 12px; }
+body.doc .badge { margin: 0; font-size: 13px; padding: 1px 8px; vertical-align: 1px; }
+body.doc .src { font-size: 13px; white-space: nowrap; }
+body.doc table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0 10px; display: block; overflow-x: auto; }
+body.doc th, body.doc td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+body.doc th { color: var(--muted); font-weight: 600; font-size: 13px; }
+body.doc footer { border-top: 1px solid var(--line); padding-top: 14px; font-size: 13px; }
+@media (max-width: 520px) { body.doc .lede { font-size: 23px; } }
+body.doc table.addrs th { color: var(--ink); font-size: 14px; width: 38%; }
+body.doc table.addrs td { overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+@media (max-width: 520px) { body.doc table.addrs tr { display: grid; } body.doc table.addrs th { width: auto; border-bottom: 0; padding-bottom: 0; } }

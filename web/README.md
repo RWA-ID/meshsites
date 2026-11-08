@@ -10,7 +10,8 @@ node web/server.ts --lan   # also listen on the LAN
 
 | Page | What it does |
 |---|---|
-| `index.html` | **Simulator.** All nodes in one page, in-memory links with bitchat-like BLE pacing. Scenarios: 2 hops, unknown signer, old bitchat client in the middle, a lying peer, a peer-to-peer Wi-Fi neighbour, 3×3 grid, forced relay. Packets are animated per hop, with timings. |
+| `index.html` | **About page.** What MeshSites is, why, how to use and publish, what works today. Static, no scripts. |
+| `simulator.html` | **Simulator.** All nodes in one page, in-memory links with bitchat-like BLE pacing. Scenarios: 2 hops, unknown signer, old bitchat client in the middle, a lying peer, a peer-to-peer Wi-Fi neighbour, 3×3 grid, forced relay. Packets are animated per hop, with timings. |
 | `tab.html?name=A` | **Multi-tab.** Each tab is one node, linked to chosen tabs over WebRTC data channels (signalling through this server, no ICE servers). BLE pacing and loss are applied in software. |
 | `viewer.html` | **Offline viewer.** Renders a stored site at `/site/<cid>/` through a service worker that re-verifies the CAR. Includes a **no-network probe**. |
 

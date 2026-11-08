@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshSites simulator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>MeshSites simulator</h1>
+  <nav><a href="index.html">About</a><a href="simulator.html" aria-current="page">Simulator</a><a href="tab.html">Multi-tab (WebRTC)</a><a href="viewer.html">Viewer</a></nav>
+  <span class="muted">Phase W testbed. A simulated bitchat BLE mesh, not real radios.</span>
+</header>
+
+<div class="layout">
+  <section class="panel">
+    <div class="controls">
+      <label>Scenario <select id="scenario"></select></label>
+      <label>Speed <select id="speed"><option value="1">1× real time</option><option value="2" selected>2×</option><option value="5">5×</option><option value="20">20×</option></select></label>
+      <label>BLE loss per fragment <span class="row"><input id="loss" type="range" min="0" max="20" value="0"><span id="loss-v">0%</span></span></label>
+      <button id="reset">Reset</button>
+      <button id="run" class="primary">Open&nbsp;<span id="target" class="mono"></span></button>
+    </div>
+    <p id="blurb"></p>
+    <svg id="graph" viewBox="0 0 600 320" role="img" aria-label="Mesh topology with packets in flight"></svg>
+    <div class="legend">
+      <span><i style="background:var(--pk-want)"></i>WANT</span>
+      <span><i style="background:var(--pk-have)"></i>HAVE</span>
+      <span><i style="background:var(--pk-name)"></i>NAME_RECORD</span>
+      <span><i style="background:var(--pk-announce)"></i>ANNOUNCE</span>
+      <span><i style="background:var(--pk-req)"></i>BLOCK_REQ</span>
+      <span><i style="background:var(--pk-block)"></i>BLOCK</span>
+      <span>dashed teal = peer-to-peer Wi-Fi</span>
+    </div>
+    <div class="progress" id="progress"></div>
+    <div id="progress-label">idle</div>
+  </section>
+
+  <aside class="stack">
+    <section class="panel">
+      <h2>Result</h2>
+      <div id="result"><p class="muted">Press Open to fetch the site.</p></div>
+      <p><a id="view" class="button primary" hidden target="_blank" rel="noopener">View the site offline →</a></p>
+    </section>
+    <section class="panel">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </section>
+  </aside>
+</div>
+
+<script type="module" src="dist/sim.js"></script>
+</body>
+</html>

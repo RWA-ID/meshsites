@@ -3,53 +3,154 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MeshSites simulator</title>
+<title>MeshSites</title>
+<meta name="description" content="Websites that still open when the internet is down. Phones pass verified IPFS sites to each other over a Bluetooth mesh.">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="doc">
 <header>
-  <h1>MeshSites simulator</h1>
-  <nav><a href="index.html" aria-current="page">Simulator</a><a href="tab.html">Multi-tab (WebRTC)</a><a href="viewer.html">Viewer</a></nav>
-  <span class="muted">Phase W testbed. A simulated bitchat BLE mesh, not real radios.</span>
+  <h1>MeshSites</h1>
+  <nav><a href="index.html" aria-current="page">About</a><a href="simulator.html">Simulator</a><a href="tab.html">Multi-tab (WebRTC)</a><a href="viewer.html">Viewer</a></nav>
 </header>
 
-<div class="layout">
-  <section class="panel">
-    <div class="controls">
-      <label>Scenario <select id="scenario"></select></label>
-      <label>Speed <select id="speed"><option value="1">1× real time</option><option value="2" selected>2×</option><option value="5">5×</option><option value="20">20×</option></select></label>
-      <label>BLE loss per fragment <span class="row"><input id="loss" type="range" min="0" max="20" value="0"><span id="loss-v">0%</span></span></label>
-      <button id="reset">Reset</button>
-      <button id="run" class="primary">Open&nbsp;<span id="target" class="mono"></span></button>
-    </div>
-    <p id="blurb"></p>
-    <svg id="graph" viewBox="0 0 600 320" role="img" aria-label="Mesh topology with packets in flight"></svg>
-    <div class="legend">
-      <span><i style="background:var(--pk-want)"></i>WANT</span>
-      <span><i style="background:var(--pk-have)"></i>HAVE</span>
-      <span><i style="background:var(--pk-name)"></i>NAME_RECORD</span>
-      <span><i style="background:var(--pk-announce)"></i>ANNOUNCE</span>
-      <span><i style="background:var(--pk-req)"></i>BLOCK_REQ</span>
-      <span><i style="background:var(--pk-block)"></i>BLOCK</span>
-      <span>dashed teal = peer-to-peer Wi-Fi</span>
-    </div>
-    <div class="progress" id="progress"></div>
-    <div id="progress-label">idle</div>
-  </section>
+<main>
+<section class="hero">
+  <p class="lede">Websites that still open when the internet is down.</p>
+  <p>MeshSites lets phones pass small websites to each other over Bluetooth, with no cell signal, Wi-Fi router or server. A site saved by one phone while it was online spreads to the phones around it, and every phone checks every byte before showing it, so a stranger in the chain can't change it.</p>
+  <p class="muted">Built on a fork of <a href="https://github.com/permissionlesstech/bitchat">bitchat</a>, the open-source Bluetooth mesh messenger. Sites are ordinary IPFS sites, optionally named with ENS (like <span class="mono">meshsites.eth</span>).</p>
+</section>
 
-  <aside class="stack">
-    <section class="panel">
-      <h2>Result</h2>
-      <div id="result"><p class="muted">Press Open to fetch the site.</p></div>
-      <p><a id="view" class="button primary" hidden target="_blank" rel="noopener">View the site offline →</a></p>
-    </section>
-    <section class="panel">
-      <h2>Log</h2>
-      <div id="log"></div>
-    </section>
-  </aside>
-</div>
+<section>
+  <h2>Why</h2>
+  <p>Connectivity fails often, and at the worst time:</p>
+  <ul>
+    <li><b>Shutdowns.</b> Access Now counted at least 313 government internet shutdowns in 52 countries in 2025, the most on record. Authorities cut satellite internet 14 times, so satellite backups aren't safe either. <a class="src" href="https://www.accessnow.org/press-release/rising-and-resisting-in-the-darkness-internet-shutdowns-in-2025/">Access Now</a></li>
+    <li><b>Storms.</b> During Hurricane Melissa, Jamaica's connectivity fell to about 30% of normal. Ten days later, Digicel still had 504 of 925 mobile sites without power. <a class="src" href="https://decrypt.co/346748/bitchat-tops-jamaica-app-charts-hurricane-melissa-cuts-connectivity">Decrypt</a> · <a class="src" href="https://www.psoj.org/wp-content/uploads/2025/11/Digicel-Jamaica-Update-HURRICANE-MELISSA-5.pdf">Digicel</a></li>
+    <li><b>Blackouts.</b> In April 2025 the Iberian blackout cut power to about 60 million people for roughly 10 hours, and calls and texts failed on most mobile networks. <a class="src" href="https://m.washingtontimes.com/news/2025/apr/28/exceptional-power-outage-spain-portugal-affects-millions-people/">AP</a></li>
+  </ul>
+  <p>People already reach for mesh apps when this happens: bitchat's downloads in Nepal went from about 3,300 to 48,781 in under a week during the 2025 social-media ban <a class="src" href="https://decrypt.co/339015/jack-dorseys-bitchat-surges-in-nepal-indonesia-amid-protest-crackdowns?amp=1">Decrypt</a>. But messaging is half the problem. The information people need most (where the shelters are, which clinic is open, which roads are passable) lives on websites they can't reach. It is also small and changes slowly, which is exactly what a mesh can carry.</p>
+</section>
 
-<script type="module" src="dist/sim.js"></script>
+<section>
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><b>Publish.</b> A static site is packaged as an IPFS archive (a CAR file) in 16 KiB blocks. Its address, the CID, is a hash of its content. An ENS name can point to it, with a record signed by the publisher.</li>
+    <li><b>Save while online.</b> Any phone with internet, even briefly, saves the site. That phone can now share it.</li>
+    <li><b>Discover nearby.</b> Phones with sharing on announce which sites they hold over bitchat's Bluetooth mesh. A phone looking for a site asks its neighbours, by name or by CID.</li>
+    <li><b>Transfer.</b> The site comes block by block from the nearest phone that has it, inside bitchat's encrypted (Noise) session.</li>
+    <li><b>Verify, then open.</b> Every block is checked against its hash and the whole site is checked before it opens. Names show <span class="badge ok">Verified</span> when the record is signed by the name's known publisher, and <span class="badge warn">Unverified</span> when the signer is unknown. Opened sites can't reach the network.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>What works today</h2>
+  <p>MeshSites is a working prototype, tested on two iPhones (an iPhone 15 Pro Max and an iPhone XS) in Airplane Mode with Bluetooth on, one hop apart:</p>
+  <table>
+    <thead><tr><th>Site</th><th>Size</th><th>Bluetooth transfer</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>Test site</td><td>103 KB, 10 blocks</td><td>about 6 s</td><td>3 passes in a row, both directions</td></tr>
+      <tr><td><span class="mono">meshsites.eth</span> (this site)</td><td>601 KB, 50 blocks</td><td>34 s</td><td>opened by name with the Verified badge</td></tr>
+    </tbody>
+  </table>
+  <p>Also working: opening sites by name, CID, <span class="mono">ipfs://</span> link or gateway link from an address bar; copying a site's address to send it in a chat; a no-network self-test; rejecting tampered blocks and trying the next phone.</p>
+  <p class="muted">Not yet: an App Store release, faster bulk transfer over peer-to-peer Wi-Fi, measurements over 2 and 3 hops (they need more phones), and fetching sites from the internet inside the app (for now a site gets onto a phone by importing its file or from another phone).</p>
+</section>
+
+<section>
+  <h2>Using it</h2>
+  <h3>Before a crisis</h3>
+  <ol>
+    <li>Install the app while you still have internet. It can't be downloaded once the network is gone.</li>
+    <li>Open <b>MeshSites</b>, import the sites you'll want (a <span class="mono">.car</span> file from the Files app), and turn on <b>Share my sites with nearby devices</b> if you want to help spread them.</li>
+  </ol>
+  <h3>When the network is down</h3>
+  <ol>
+    <li>Keep Bluetooth on and the app open. (iOS limits Bluetooth for apps in the background.)</li>
+    <li>Type a name or address in <b>Open a site</b>: a name like <span class="mono">yourcity.eth</span>, an <span class="mono">ipfs://bafy…</span> link (try the examples below), or a gateway link someone sent you. A saved site opens at once; otherwise the app asks nearby phones and downloads it.</li>
+    <li>Check the badge. <span class="badge ok">Verified</span> means the publisher signed it. Treat <span class="badge warn">Unverified</span> with care: the content is intact, but nobody you trust has vouched for who published it.</li>
+    <li>Pass it on: <b>Copy address</b> and send it in a bitchat chat, or just keep sharing on. Phones that walk between shelters and streets carry sites with them.</li>
+  </ol>
+  <h3>Publishing a site</h3>
+  <ol>
+    <li>Keep it small: aim for under 200 KB (1 MB is the cap). Text first, compressed images, no web fonts or big frameworks. Use relative links.</li>
+    <li>Package and sign it with the <span class="mono">meshsites</span> CLI: <span class="mono">meshsites publish ./site --name yourname.eth</span>. It prints the mesh CID and two ENS text records, <span class="mono">meshsites.signer</span> and <span class="mono">meshsites.record</span>.</li>
+    <li>Pin the site to IPFS, point your ENS name at it, and set the two text records. The same site keeps working through any <span class="mono">.eth.limo</span> gateway when networks are up.</li>
+    <li>Get it onto phones <em>before</em> it's needed: share the <span class="mono">.car</span> file and the name through your usual channels.</li>
+    <li>To update, publish again. The new record has a higher sequence number, so it replaces the old one on every phone that hears it, and opening the name then fetches the new version.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Where it fits</h2>
+  <table>
+    <thead><tr><th>When</th><th>What a meshsite carries</th><th>Who publishes</th></tr></thead>
+    <tbody>
+      <tr><td>Hurricanes, floods, earthquakes</td><td>Shelters, water points, medical posts, road status</td><td>Emergency agencies, Red Cross, municipalities</td></tr>
+      <tr><td>Grid blackouts</td><td>Outage notices, charging points, open pharmacies and stores</td><td>Utilities, cities, local businesses</td></tr>
+      <tr><td>War and conflict</td><td>Shelter maps, evacuation routes, first aid, aid schedules</td><td>Civil defense, NGOs</td></tr>
+      <tr><td>Internet shutdowns</td><td>News snapshots, legal-rights guides, fact-checks</td><td>Journalists, civil society</td></tr>
+      <tr><td>Off-grid and rural areas</td><td>Health and farming guides, school materials, directories</td><td>Schools, co-ops, health workers</td></tr>
+      <tr><td>Crowded events</td><td>Maps, schedules, exits, lost and found</td><td>Organizers, venues</td></tr>
+    </tbody>
+  </table>
+  <p>It fits poorly when content is live (balances, chat inside a site) or large (video), or when people are spread far apart: Bluetooth reaches tens of metres per hop.</p>
+</section>
+
+<section>
+  <h2>A hurricane, step by step</h2>
+  <p class="muted">A hypothetical walkthrough, modeled on Hurricane Fiona in the Dominican Republic (2022) and Melissa in Jamaica (2025).</p>
+  <ol>
+    <li><b>72 hours before.</b> The city publishes <span class="mono">refugios.[city].eth</span>: shelters, water points, emergency numbers and first aid, under 200 KB. Radio and WhatsApp groups ask people to save it in the app. Thousands of phones now hold a copy.</li>
+    <li><b>Landfall.</b> Power and cell service fail. Saved copies keep working.</li>
+    <li><b>Day 1.</b> Someone who never saved it opens the app in a shelter. A neighbour's phone has it; it arrives over Bluetooth, verified against the city's key.</li>
+    <li><b>Day 2.</b> A team with a satellite terminal publishes an update (open roads, the water truck's route). Its newer record replaces the old one on phones that hear it, and opening the name fetches the new version from whoever has it.</li>
+    <li><b>Recovery.</b> The same sites stay reachable through any <span class="mono">.eth</span> gateway. Nothing to migrate.</li>
+  </ol>
+  <p><b>Preparation does most of the work.</b> MeshSites spreads what was published in advance and carries updates from the few connected phones to everyone else.</p>
+</section>
+
+<section>
+  <h2>Limits and privacy</h2>
+  <ul>
+    <li><b>Asking is visible.</b> Typing an address asks nearby phones for it, so they can see what you asked for. No accounts or phone numbers are involved.</li>
+    <li><b>Slow and short-range.</b> Bluetooth carries small sites in seconds to a minute at one hop; each extra hop is slower. Dense places (shelters, camps, neighbourhoods) work best.</li>
+    <li><b>Battery.</b> Sharing uses power. It's off by default and you control it.</li>
+    <li><b>Install first.</b> The app has to be on the phone before the network goes.</li>
+  </ul>
+</section>
+
+<section id="examples">
+  <h2>Example sites</h2>
+  <p>Two small sample sites, about 5 KB each, show the size and shape a meshsite should have. Both are clearly marked as examples with made-up places and numbers. Open them in the app with the <span class="mono">ipfs://</span> address, or on the web through an IPFS gateway.</p>
+  <table class="addrs">
+    <tbody>
+      <tr><th>Emergency (Spanish): shelters, water, clinics, roads, emergency numbers for a fictional town</th><td class="mono">ipfs://bafybeigvgj6gkgunhyhvrjejx6tzhmox6qzmk3i3dup3h7qkykpsweb76a<br><a href="https://ipfs.onchain-id.id/ipfs/bafybeigvgj6gkgunhyhvrjejx6tzhmox6qzmk3i3dup3h7qkykpsweb76a/">open on the web</a></td></tr>
+      <tr><th>News: a bulletin snapshot and a "staying safe offline" guide</th><td class="mono">ipfs://bafybeigkmqxnazsh2e4dpejt6aw27vm7rvcurh7xod4jilw3gpnf2bcc2a<br><a href="https://ipfs.onchain-id.id/ipfs/bafybeigkmqxnazsh2e4dpejt6aw27vm7rvcurh7xod4jilw3gpnf2bcc2a/">open on the web</a></td></tr>
+    </tbody>
+  </table>
+  <p class="muted">Their source is in the repository under <span class="mono">examples/</span>. Copy one as a starting point for a real site.</p>
+</section>
+
+<section id="support">
+  <h2>Support MeshSites</h2>
+  <p>MeshSites is built by one independent developer, unfunded. Donations pay for test phones (multi-hop tests need at least three), Apple's developer program for an App Store release, and the first pilot with a city or relief group. Every bit helps.</p>
+  <p>Send to <b class="mono">ensgiant.eth</b> from any wallet that understands ENS names, or use the addresses below:</p>
+  <table class="addrs">
+    <tbody>
+      <tr><th>Ethereum, Base and other EVM chains (ETH, USDC…)</th><td class="mono">0x2D037f66b9e0EDE90c2080558a7d3FF7BE36E9A1</td></tr>
+      <tr><th>Bitcoin</th><td class="mono">bc1qmnqylca7dnsa96g2ykyhqyhgu5mmzse22davhf</td></tr>
+      <tr><th>Solana (SOL, USDC)</th><td class="mono">4rZudqFF3ZSngGUTjHrwMmrEzdKLYU36bibBLj348P81</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">Check the address in your wallet against <span class="mono">ensgiant.eth</span> before sending, and send only on the networks listed. Updates and thanks on X: <a href="https://x.com/ensgianteth">@ensgianteth</a>.</p>
+</section>
+
+<section>
+  <h2>Try it in a browser</h2>
+  <p>The <a href="simulator.html">simulator</a> runs the same protocol over a simulated mesh: watch a site travel 2 hops, a lying phone get caught, or an unknown signer get flagged. The <a href="viewer.html">viewer</a> opens the demo site offline from verified blocks.</p>
+</section>
+</main>
+
+<footer class="muted"><a href="#support">Support MeshSites</a> · MeshSites is a prototype. Built on <a href="https://github.com/permissionlesstech/bitchat">bitchat</a> (public domain). Sources for the figures above are linked next to each one.</footer>
 </body>
 </html>

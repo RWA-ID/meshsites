@@ -1,7 +1,8 @@
 /**
  * Static build for IPFS / meshsites.eth: `npm run build:static` → web/out/
  *
- *   out/index.html, viewer.html, style.css   pages (multi-tab page left out:
+ *   out/index.html, simulator.html,          pages (multi-tab page left out:
+ *   viewer.html, style.css
  *                                            it needs the signalling server)
  *   out/sw.js                                service worker at the root, so it
  *                                            can control /site/
