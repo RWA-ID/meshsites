@@ -6,3 +6,4 @@ dist/
 .env*
 .DS_Store
 !MeshSitesKit/Sources/MeshSitesKit/Resources/*.car
+!examples/*.car
