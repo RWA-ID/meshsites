@@ -270,7 +270,7 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
     /// nearby name lookups for it. Update after every re-pin of meshsites.eth.
     static let anchorName = "meshsites.eth"
     static let anchorSigner = "0x8e0783451d07ba750f201ae9bf6d93385e6da410"
-    static let anchorRecord = #"{"record":{"v":1,"name":"meshsites.eth","cid":"bafybeid4yps7awrai7spe7wdnz6d5lvsgs2fa62xc3c2blsavaafryhj7u","origCid":"bafybeiczn2z73stly5coqera6owcr5wjmfv57gcvd4fl62dkpjg4epgxy4","seq":1794014229,"ts":1794014229,"signer":"0x8e0783451d07ba750f201ae9bf6d93385e6da410"},"sig":"0x8e50b6ad032cd1fbc99bf539512c376bfc65727e899a9a71cc0009ada38fd4b62653a0782669ee4663fe9adcc03fc8fec429a8a53658e5e5f5c60e46940137e71b"}"#
+    static let anchorRecord = #"{"record":{"v":1,"name":"meshsites.eth","cid":"bafybeiavlfc4pq7nk4zbyiai35p56l5uvgyvzl5jq4uoq6g3hyormilx4m","origCid":"bafybeiac2sgltcqclwhe7w5pvhmo3ymd2jpdsn3xmlpeexozbr3n45w4na","seq":1794098330,"ts":1794098330,"signer":"0x8e0783451d07ba750f201ae9bf6d93385e6da410"},"sig":"0x74fd09650dc4a9a513878cf1b7d08c15ece6559237f09f862bb87aa1bd858c6e3b54514e6415e65b6beac8bad39fe15f1422c5f0c3cf660baad5233aeb8e24951c"}"#
 
     static func addTrustAnchors(_ g: inout Gossip) {
         g.trust(name: anchorName, signer: anchorSigner)

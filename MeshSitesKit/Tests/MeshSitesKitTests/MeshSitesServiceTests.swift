@@ -214,7 +214,7 @@ final class MeshSitesServiceTests: XCTestCase {
         b.open("meshsites.eth")
         // No one holds the site here, but the name resolved offline from the built-in record.
         waitFor("download gives up", timeout: 8) { if case .failed = b.lookup?.phase { return true }; return false }
-        XCTAssertEqual(b.lookup?.root, "bafybeid4yps7awrai7spe7wdnz6d5lvsgs2fa62xc3c2blsavaafryhj7u")
+        XCTAssertEqual(b.lookup?.root, "bafybeiavlfc4pq7nk4zbyiai35p56l5uvgyvzl5jq4uoq6g3hyormilx4m")
         XCTAssertFalse(b.log.contains { $0.contains("WANT name") }, "resolved locally, no name lookup sent")
         var status: Result<String, Error>?
         b.addNameRecord(MeshSitesService.anchorRecord) { status = $0 }
