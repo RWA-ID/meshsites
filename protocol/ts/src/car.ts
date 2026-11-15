@@ -120,15 +120,21 @@ export function orderedBlocks(root: CID, src: BlockSource): Block[] {
   return ordered;
 }
 
-/** Build the mesh CAR. Blocks are written depth-first pre-order from the root, each once. */
-export async function buildSiteCar(files: SiteFile[], opts: { skipVerify?: boolean } = {}): Promise<BuiltCar> {
+/**
+ * Build the mesh CAR. Blocks are written depth-first pre-order from the root, each once.
+ * `limits` replaces the whole-site caps of the self-check (e.g. BOX_LIMITS for a box-only site).
+ */
+export async function buildSiteCar(
+  files: SiteFile[],
+  opts: { skipVerify?: boolean; limits?: { maxSiteBytes?: number; maxLogicalBytes?: number } } = {},
+): Promise<BuiltCar> {
   if (files.length === 0) throw new Error('site has no files');
   const { root, blocks } = await importToMap(files, MESH_IMPORTER_OPTIONS);
   const ordered = orderedBlocks(root, { get: (c) => blocks.get(c.toString())?.bytes });
   const car = await writeCar([root], ordered);
   const totalBytes = ordered.reduce((n, b) => n + b.bytes.length, 0);
   // Verify what we built with the same rules a receiver uses.
-  const check = opts.skipVerify ? { ok: true, errors: [] } : await verifyCar(car);
+  const check = opts.skipVerify ? { ok: true, errors: [] } : await verifyCar(car, opts.limits);
   if (!check.ok) throw new Error(`built CAR fails verification: ${check.errors.join('; ')}`);
   return { root, car, blocks: ordered.map((b) => ({ cid: b.cid.toString(), size: b.bytes.length })), totalBytes };
 }
@@ -294,22 +300,36 @@ export function verifyDag(
  * file/directory/raw UnixFS nodes, and the size caps.
  */
 export async function verifyCar(car: Uint8Array, opts: VerifyCarOptions = {}): Promise<CarVerification> {
+  return (await openCar(car, opts)).verification;
+}
+
+/**
+ * verifyCar, plus the blocks when (and only when) the CAR passed, so a caller
+ * that goes on to serve the site doesn't parse and hash it twice.
+ */
+export async function openCar(
+  car: Uint8Array,
+  opts: VerifyCarOptions = {},
+): Promise<{ verification: CarVerification; root?: CID; source?: BlockSource }> {
   let parsed: Awaited<ReturnType<typeof readCar>>;
   try {
     parsed = await readCar(car, opts.maxBlockBytes);
   } catch (e) {
     const m = (e as Error).message;
-    return { ok: false, blockCount: 0, totalBytes: 0, errors: [m.startsWith('CAR ') ? m : `CAR parse error: ${m}`] };
+    return {
+      verification: { ok: false, blockCount: 0, totalBytes: 0, errors: [m.startsWith('CAR ') ? m : `CAR parse error: ${m}`] },
+    };
   }
   const { root, blocks } = parsed;
   const errors = [...parsed.errors];
   if (opts.expectedRoot !== undefined && root.toString() !== opts.expectedRoot)
     errors.push(`root is ${root.toString()}, expected ${opts.expectedRoot}`);
-  const dag = verifyDag(root, { get: (c) => blocks.get(c.toString())?.bytes }, opts);
+  const source: BlockSource = { get: (c) => blocks.get(c.toString())?.bytes };
+  const dag = verifyDag(root, source, opts);
   errors.push(...dag.errors);
   for (const m of dag.missing) errors.push(`${m.toString()}: missing block`);
   for (const k of blocks.keys()) if (!dag.reached.has(k)) errors.push(`${k}: block not reachable from root`);
-  return {
+  const verification: CarVerification = {
     ok: errors.length === 0,
     root: root.toString(),
     blockCount: blocks.size,
@@ -317,4 +337,5 @@ export async function verifyCar(car: Uint8Array, opts: VerifyCarOptions = {}): P
     logicalBytes: dag.logicalBytes,
     errors,
   };
+  return verification.ok ? { verification, root, source } : { verification };
 }

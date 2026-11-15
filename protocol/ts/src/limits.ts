@@ -17,6 +17,16 @@ export const LIMITS = {
   maxFutureSkewSec: 300,
 } as const;
 
+/**
+ * Box tier: sites a Wi-Fi box (`meshsites serve`) stores and serves over
+ * HTTP. Same packaging and per-block rules as the mesh; only the whole-site
+ * caps are larger. A site over the mesh caps never travels over Bluetooth.
+ */
+export const BOX_LIMITS = {
+  maxSiteBytes: 64 * 1024 * 1024,
+  maxLogicalBytes: 256 * 1024 * 1024,
+} as const;
+
 export const CODEC_RAW = 0x55;
 export const CODEC_DAG_PB = 0x70;
 export const HASH_SHA2_256 = 0x12;

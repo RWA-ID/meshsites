@@ -48,6 +48,17 @@ Before a site is rendered (whole DAG):
 8. Sum of unique block bytes ≤ **1 MiB** (also checked against `ANNOUNCE.sizeBytes` *before* downloading).
 9. Expanded size ≤ **4 MiB**: each node's size is its inline UnixFS data plus the expanded size of each link, counted once per reference. Compute it with memoisation; this stops a small CAR that references one block many times (`vectors/dedupe-bomb.car`).
 
+### 2.3 Box tier
+
+A box (`meshsites serve`, `docs/box.md`) stores sites and serves them over HTTP on a local network. It applies §2.1 and §2.2 unchanged except for two caps:
+
+| Cap | Mesh | Box |
+|---|---|---|
+| Sum of unique block bytes (step 8) | 1 MiB | **64 MiB** |
+| Expanded size (step 9) | 4 MiB | **256 MiB** |
+
+Chunk size and the 32768-byte block cap are the same, so a site within the mesh caps has the same CID on a box and on the mesh. A site over the mesh caps is box-only: it is never announced or fetched over the mesh, and mesh receivers reject it at step 8.
+
 ## 3. Canonical JSON
 
 Used for anything signed. Output is UTF-8.

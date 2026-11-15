@@ -6,6 +6,7 @@
  *   meshsites verify <file.car> [--root CID]
  *   meshsites sign-record <record.json> (--key-env VAR | --sig 0x…) [--out signed.json]
  *   meshsites verify-record <signed.json> [--signer 0x…] [--cached-seq N] [--now SECONDS]
+ *   meshsites serve <dir> [--port 8080] [--host ::] [--domain mesh.lan] [--dns IP]
  *
  * Private keys are only read from an environment variable named by --key-env,
  * never from argv (argv lands in shell history and `ps`).
@@ -18,6 +19,7 @@ import {
   addressFromPrivateKey,
   attachSignature,
   assertWellFormed,
+  BOX_LIMITS,
   buildSiteCar,
   kuboDefaultCid,
   LIMITS,
@@ -31,14 +33,20 @@ import {
   verifyRecord,
 } from '@meshsites/protocol';
 import { ens_normalize } from '@adraffy/ens-normalize';
+import { parseIPv4, serveCommand } from './serve.ts';
 
 class UsageError extends Error {}
 
 const USAGE = `usage:
-  meshsites publish <dir> --name <ens> [--out site.car] [--seq N] [--orig-cid CID] [--key-env VAR] [--signer 0x…]
-  meshsites verify <file.car> [--root CID]
+  meshsites publish <dir> --name <ens> [--out site.car] [--seq N] [--orig-cid CID] [--key-env VAR] [--signer 0x…] [--box]
+  meshsites verify <file.car> [--root CID] [--box]
   meshsites sign-record <record.json> (--key-env VAR | --sig 0x…) [--out signed.json]
-  meshsites verify-record <signed.json> [--signer 0x…] [--cached-seq N] [--now SECONDS]`;
+  meshsites verify-record <signed.json> [--signer 0x…] [--cached-seq N] [--now SECONDS]
+  meshsites serve <dir> [--port 8080] [--host ::] [--domain mesh.lan] [--dns IP]
+
+  --dns   also answer DNS (port 53, needs sudo): every name → IP, this computer.
+  --box   allow a site over the 1 MiB mesh limit (up to 64 MiB). It is served
+          by Wi-Fi boxes only and never travels between phones over Bluetooth.`;
 
 const out = (s = '') => process.stdout.write(`${s}\n`);
 const err = (s: string) => process.stderr.write(`${s}\n`);
@@ -83,6 +91,7 @@ async function publish(args: string[]) {
       'orig-cid': { type: 'string' },
       'key-env': { type: 'string' },
       signer: { type: 'string' },
+      box: { type: 'boolean' },
     },
   });
   const dir = positionals[0];
@@ -93,9 +102,19 @@ async function publish(args: string[]) {
   const { files, skipped } = await readSiteDir(dir);
   if (skipped.length) err(`skipped: ${skipped.join(', ')}`);
   if (!files.some((f) => f.path === 'index.html')) err('warning: no index.html at the site root');
-  const built = await buildSiteCar(files);
-  if (built.totalBytes > LIMITS.maxSiteBytes)
-    throw new UsageError(`site is ${built.totalBytes} bytes; the mesh limit is ${LIMITS.maxSiteBytes}`);
+  // Build first, then judge the size ourselves, so the message can say what to do about it.
+  const built = await buildSiteCar(files, { skipVerify: true });
+  const cap = values.box ? BOX_LIMITS : LIMITS;
+  if (built.totalBytes > cap.maxSiteBytes) {
+    throw new UsageError(
+      values.box || built.totalBytes > BOX_LIMITS.maxSiteBytes
+        ? `site is ${built.totalBytes} bytes; the box limit is ${BOX_LIMITS.maxSiteBytes}`
+        : `site is ${built.totalBytes} bytes; the mesh limit is ${LIMITS.maxSiteBytes}. Pass --box for a Wi-Fi-box-only site (up to ${BOX_LIMITS.maxSiteBytes} bytes).`,
+    );
+  }
+  const check = await verifyCar(built.car, cap);
+  if (!check.ok) throw new Error(`built CAR fails verification: ${check.errors.join('; ')}`);
+  if (built.totalBytes > LIMITS.maxSiteBytes) err('note: over the 1 MiB mesh limit. Wi-Fi boxes will serve this site; phones will not pass it on over Bluetooth.');
 
   const carPath = values.out ?? `${basename(dir.replace(/\/+$/, '')) || 'site'}.car`;
   await writeFile(carPath, built.car);
@@ -143,9 +162,9 @@ async function publish(args: string[]) {
 }
 
 async function verify(args: string[]) {
-  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { root: { type: 'string' } } });
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { root: { type: 'string' }, box: { type: 'boolean' } } });
   if (!positionals[0]) throw new UsageError('verify needs <file.car>');
-  const res = await verifyCar(new Uint8Array(await readFile(positionals[0])), { expectedRoot: values.root });
+  const res = await verifyCar(new Uint8Array(await readFile(positionals[0])), { expectedRoot: values.root, ...(values.box ? BOX_LIMITS : {}) });
   if (res.ok) {
     out(`OK  root ${res.root}  ${res.blockCount} blocks  ${res.totalBytes} bytes, every block re-hashed`);
     return 0;
@@ -199,6 +218,22 @@ async function verifyRecordCmd(args: string[]) {
   return 0;
 }
 
+async function serve(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { port: { type: 'string' }, host: { type: 'string' }, domain: { type: 'string' }, dns: { type: 'string' } },
+  });
+  if (!positionals[0]) throw new UsageError('serve needs <dir> (a folder of .car files and signed records)');
+  const port = int('port', values.port) ?? 8080;
+  if (port > 65535) throw new UsageError('--port must be at most 65535');
+  const domain = (values.domain ?? 'mesh.lan').toLowerCase();
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(domain)) throw new UsageError('--domain must be a DNS name like mesh.lan');
+  const dns = values.dns === undefined ? undefined : parseIPv4(values.dns);
+  if (values.dns !== undefined && !dns) throw new UsageError("--dns takes this computer's IPv4 address on the box network, e.g. --dns 192.168.8.2");
+  return serveCommand(positionals[0], { port, host: values.host ?? '::', domain, dns });
+}
+
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
@@ -211,6 +246,8 @@ async function main(argv: string[]): Promise<number> {
       return signRecordCmd(rest);
     case 'verify-record':
       return verifyRecordCmd(rest);
+    case 'serve':
+      return serve(rest);
     case undefined:
     case '-h':
     case '--help':

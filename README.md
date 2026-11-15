@@ -33,7 +33,9 @@ A working prototype, verified on two iPhones (15 Pro Max on iOS 26.6, XS on iOS 
 | test site | 103 KB, 10 blocks | about 6 s | 3 passes in a row, both directions |
 | `meshsites.eth` | 601 KB, 50 blocks | 34 s | opened by name, Verified |
 
-Done: M0–M3 (protocol, publisher CLI, web testbed, on-device rendering, mesh discovery), M4's Bluetooth block transfer, and the address bar (open by name, CID, `ipfs://` or gateway link; copy a site's address). See `docs/decisions.md` (D1–D14) and `docs/benchmarks.md`.
+Done: M0–M3 (protocol, publisher CLI, web testbed, on-device rendering, mesh discovery), M4's Bluetooth block transfer, and the address bar (open by name, CID, `ipfs://` or gateway link; copy a site's address). See `docs/decisions.md` (D1–D15) and `docs/benchmarks.md`.
+
+New, in software only: a **Wi-Fi box** that serves sites to ordinary browsers with no app (`docs/box.md`). It has not been run on a router yet; testers welcome.
 
 Not yet: an App Store release, peer-to-peer Wi-Fi bulk transfer, 2- and 3-hop measurements (need more phones), fetching sites from the internet inside the app (M5), battery and cache policies (M6).
 
@@ -42,6 +44,17 @@ Not yet: an App Store release, peer-to-peer Wi-Fi bulk transfer, 2- and 3-hop me
 **Before a crisis:** install the app while you have internet. In MeshSites, import the sites you'll want (a `.car` file from the Files app) and turn on **Share my sites with nearby devices** to help spread them.
 
 **When the network is down:** keep Bluetooth on and the app open (iOS limits Bluetooth in the background). Type a name or link in **Open a site**: `yourcity.eth`, `ipfs://bafy…` (try the example sites below), `https://name.eth.limo/…` or a gateway link. A saved site opens at once; otherwise nearby phones are asked and it downloads. **Copy address** to send it on in a bitchat chat. Asking is visible to nearby phones, so they can see which site you asked for.
+
+## Without the app: a Wi-Fi box
+
+A laptop or Raspberry Pi on a Wi-Fi network with no internet can hand sites to any phone's browser. People join the Wi-Fi, a list of sites appears, they tap one.
+
+```sh
+npm install
+node cli/src/main.ts serve examples      # then open http://localhost:8080/
+```
+
+Names such as `yourname.eth` work on a box with no internet, from the name's signed record. A box can also hold sites up to 64 MiB, which are too large for Bluetooth. A browser can't check a site the way the app does, so visitors are trusting whoever runs the box. Setup for a spare router, a travel router or a Raspberry Pi: [`docs/box.md`](docs/box.md).
 
 ## Example sites
 
@@ -81,7 +94,7 @@ node cli/src/main.ts verify-record site.record.signed.json --signer 0x… --cach
 | `protocol/SPEC.md` | packaging, canonical JSON, signed name records, wire format |
 | `protocol/vectors/` | normative test vectors shared by TypeScript and Swift |
 | `protocol/ts/` | TypeScript implementation (`@meshsites/protocol`) |
-| `cli/` | `meshsites` publisher CLI |
+| `cli/` | `meshsites` CLI: publish and verify sites, and `serve` them from a Wi-Fi box |
 | `web/` | this website, the browser simulator and offline viewer (`npm run web`; `npm run build:static` for IPFS) |
 | `MeshSitesCore/` | Swift protocol core (CIDs, CAR, records, gossip, fetch, addresses) |
 | `MeshSitesKit/` | iOS/macOS app layer: site store, locked-down web view, mesh service, screens |
