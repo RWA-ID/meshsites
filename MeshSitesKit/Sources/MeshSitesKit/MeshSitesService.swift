@@ -150,6 +150,7 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
                 guard let self else { return }
                 self.storedSites = sites
                 self.sourceCache.removeAll { c in !sites.contains { $0.root == c.root } }
+                self.nameUnnamedSites()
                 self.syncSites()
                 self.publish()
                 if self.gossip.config.seeding { self.scheduleAnnounce(after: 0.5 + Double.random(in: 0...1)) }
@@ -314,10 +315,26 @@ public final class MeshSitesService: ObservableObject, @unchecked Sendable {
             do {
                 if let signer, let name = (try? JSON.parse(signedText))?["record"]?["name"]?.string { gossip.trust(name: name, signer: signer) }
                 let status = try gossip.addRecord(signedText, nowSec: Int64(Date().timeIntervalSince1970))
+                nameUnnamedSites()
                 done?(.success(status.rawValue))
             } catch {
                 done?(.failure(error))
             }
+        }
+    }
+
+    /// A site stored without a name (downloaded from the nearby list, imported from a file) takes the
+    /// name of a signed record this device holds for that exact CID, Verified first. Runs on `queue`.
+    private func nameUnnamedSites() {
+        let pending: [(root: String, name: String, status: String)] = storedSites.compactMap { site in
+            guard site.name == nil else { return nil }
+            let matches = gossip.names.filter { $0.value.root == site.root }.sorted { $0.key < $1.key }
+            guard let best = matches.first(where: { $0.value.status == .verified }) ?? matches.first else { return nil }
+            return (site.root, best.key, best.value.status.rawValue)
+        }
+        guard !pending.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            for p in pending { self?.store.setName(p.root, name: p.name, status: p.status) }
         }
     }
 

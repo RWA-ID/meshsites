@@ -207,6 +207,18 @@ final class MeshSitesServiceTests: XCTestCase {
         XCTAssertEqual(b.lookup?.phase, .failed("Nobody nearby has a signed record for nobody-has-this.eth."))
     }
 
+    func testASiteStoredByCIDTakesTheNameOfAHeldRecord() throws {
+        let link = Link()
+        // Imported as a file: no name yet.
+        let a = try makeNode("a3a3a3a3a3a3a3a3", link: link, seeding: false, sites: ["site-basic.car"])
+        waitFor("attached") { a.attached }
+        XCTAssertNil(a.store.sites.first?.name)
+        // A signed record for that exact CID arrives, with its signer known from ENS: the site is named, Verified.
+        a.addNameRecord(Self.exampleRecord, signer: "0x6ea2147f6874d28aaa3821b4c68c64ff7db0c8df")
+        waitFor("named") { a.store.sites.first?.name == "example.eth" }
+        XCTAssertEqual(a.store.sites.first?.nameStatus, "verified")
+    }
+
     func testBuiltInAnchorResolvesMeshsitesEthAsVerified() throws {
         let link = Link()
         let b = try makeNode("b2b2b2b2b2b2b2b2", link: link, seeding: false)

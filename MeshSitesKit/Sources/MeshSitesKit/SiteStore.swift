@@ -95,6 +95,15 @@ public final class SiteStore: ObservableObject {
         return site
     }
 
+    /// Give a stored site its name, from a signed record the device holds for that exact site.
+    public func setName(_ root: String, name: String, status: String?) {
+        guard var site = sites.first(where: { $0.root == root }), site.name != name || site.nameStatus != status else { return }
+        site.name = name
+        site.nameStatus = status
+        try? JSONEncoder().encode(site).write(to: metaURL(root), options: .atomic)
+        reload()
+    }
+
     public func delete(_ root: String) {
         try? FileManager.default.removeItem(at: carURL(root))
         try? FileManager.default.removeItem(at: metaURL(root))
