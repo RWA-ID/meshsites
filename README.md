@@ -127,4 +127,4 @@ Check the address against `ensgiant.eth` in your wallet before sending. Updates 
 
 ## License
 
-Not chosen yet. bitchat is public domain (Unlicense); the candidates are Unlicense, to match it, or MIT.
+MIT; see [`LICENSE`](LICENSE). The `ios/` folder is a fork of [bitchat](https://github.com/permissionlesstech/bitchat), which is public domain (Unlicense, `ios/LICENSE`); the MeshSites changes to it are MIT.
